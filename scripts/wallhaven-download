@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+"""Download wallpapers from Wallhaven by category/tag"""
+import argparse, json, os, sys, time, urllib.request, urllib.error
+from pathlib import Path
+
+API = "https://wallhaven.cc/api/v1/search"
+DIR = Path.home() / "Imágenes" / "wallpapers"
+
+CAT_PRESETS = {
+    "random":   {"cats": "111", "purity": "100", "q": ""},
+    "anime":    {"cats": "010", "purity": "100", "q": ""},
+    "manga":    {"cats": "010", "purity": "100", "q": "manga panel"},
+    "sketch":   {"cats": "111", "purity": "010", "q": ""},
+    "general":  {"cats": "100", "purity": "100", "q": ""},
+}
+
+def fetch(count, cats="111", purity="100", atleast="1920x1080", sorting="random", search="", api_key=""):
+    params = f"categories={cats}&purity={purity}&atleast={atleast}&sorting={sorting}&page=1"
+    if search:
+        params += f"&q={urllib.parse.quote(search)}"
+    if api_key:
+        params += f"&apikey={api_key}"
+    url = f"{API}?{params}"
+    
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "waypaper-wallhaven/1.0"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode())
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return []
+
+    results = data.get("data", [])
+    existing = {f.name for f in DIR.iterdir() if f.is_file()} if DIR.exists() else set()
+    
+    downloaded = 0
+    for item in results:
+        if downloaded >= count:
+            break
+        img_url = item.get("path", "")
+        if not img_url:
+            continue
+        fname = f"wh-{item['id']}.{img_url.rsplit('.', 1)[-1]}"
+        if fname in existing:
+            continue
+        try:
+            print(f"  ↓ {item['id']} ({item['resolution']})")
+            req = urllib.request.Request(img_url, headers={"User-Agent": "waypaper-wallhaven/1.0"})
+            with urllib.request.urlopen(req, timeout=30) as img:
+                (DIR / fname).write_bytes(img.read())
+            downloaded += 1
+            time.sleep(0.5)
+        except Exception as e:
+            print(f"  ✗ {item['id']}: {e}", file=sys.stderr)
+    return downloaded
+
+def main():
+    import urllib.parse
+
+    p = argparse.ArgumentParser(description="Download wallpapers from Wallhaven")
+    p.add_argument("-n", type=int, default=5, help="number of wallpapers (default: 5)")
+    p.add_argument("--id", help="download a specific wallpaper by ID")
+    p.add_argument("--cats", default="111", help="categories bitmask (1=general,2=anime,4=people)")
+    p.add_argument("--purity", default="100", help="purity bitmask (1=sfw,2=sketchy,4=nsfw)")
+    p.add_argument("--res", default="1920x1080", help="minimum resolution")
+    p.add_argument("--sort", default="random", choices=["random", "relevance", "date_added", "views", "downloads", "favorites", "toplist"], help="sorting")
+    p.add_argument("-q", "--search", default="", help="search keyword/tag (e.g. 'manga panel', 'anime girl')")
+    p.add_argument("--preset", choices=list(CAT_PRESETS.keys()), help="category preset")
+    p.add_argument("--api-key", default=os.environ.get("WALLHAVEN_KEY", ""), help="Wallhaven API key (or WALLHAVEN_KEY env)")
+    args = p.parse_args()
+
+    if args.preset:
+        preset = CAT_PRESETS[args.preset]
+        args.cats = preset["cats"]
+        args.purity = preset["purity"]
+        if preset["q"] and not args.search:
+            args.search = preset["q"]
+
+    DIR.mkdir(parents=True, exist_ok=True)
+    print(f"Descargando {args.n} wallpapers en {DIR}")
+    if args.search:
+        print(f"  búsqueda: '{args.search}' | cats={args.cats} purity={args.purity}")
+    else:
+        print(f"  cats={args.cats} purity={args.purity}")
+    
+    if args.id:
+        try:
+            url = f"https://wallhaven.cc/api/v1/w/{args.id}"
+            req = urllib.request.Request(url, headers={"User-Agent": "waypaper-wallhaven/1.0"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                item = json.loads(resp.read().decode())["data"]
+            img_url = item["path"]
+            fname = f"wh-{args.id}.{img_url.rsplit('.', 1)[-1]}"
+            print(f"↓ {args.id} ({item['resolution']})")
+            req = urllib.request.Request(img_url, headers={"User-Agent": "waypaper-wallhaven/1.0"})
+            with urllib.request.urlopen(req, timeout=30) as img:
+                (DIR / fname).write_bytes(img.read())
+            print(f"  → {DIR / fname}")
+        except Exception as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        n = fetch(args.n, args.cats, args.purity, args.res, args.sort, args.search, args.api_key)
+        print(f"Descargados {n} wallpapers")
+        if n < args.n:
+            print(f"  (solo {n}/{args.n} — duplicados o rate limit)")
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,185 @@
+#!/usr/bin/env python3
+"""
+Wallpaper preference engine + recommendation + cleanup.
+Usage:
+  wallpaper-brain keep <path>
+  wallpaper-brain discard <path>
+  wallpaper-brain recommend [N]
+  wallpaper-brain cleanup [min]
+  wallpaper-brain status
+  wallpaper-brain forget <path>
+"""
+import json, os, random, subprocess, sys, time, urllib.request, urllib.error
+from pathlib import Path
+
+APPDIR = Path.home() / ".config" / "waypaper"
+PREFS = APPDIR / "preferences.json"
+WALLPAPER_DIR = Path.home() / "Imágenes" / "wallpapers"
+DOWNLOADER = Path.home() / ".local/bin/wallhaven-download"
+LIFETIME_MIN = 20
+
+def load():
+    if PREFS.exists():
+        try:
+            return json.loads(PREFS.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {"kept": {}, "discarded": {}, "tag_weights": {}, "tag_count": 0,
+            "last_cleanup": "", "last_recommend": ""}
+
+def save(prefs):
+    APPDIR.mkdir(parents=True, exist_ok=True)
+    PREFS.write_text(json.dumps(prefs, indent=2, ensure_ascii=False))
+
+def wid_from(path):
+    n = Path(path).stem
+    return n[3:] if n.startswith("wh-") else None
+
+def fetch_tags(wid):
+    if not wid:
+        return []
+    try:
+        req = urllib.request.Request(f"https://wallhaven.cc/api/v1/w/{wid}",
+                                     headers={"User-Agent": "wallpaper-brain/1.0"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.loads(r.read().decode())["data"]
+        return [t["name"] for t in data.get("tags", [])]
+    except Exception:
+        return []
+
+def cmd_keep(path):
+    path = Path(path).expanduser().resolve()
+    wid = wid_from(path)
+    if not wid:
+        print(f"✗ No Wallhaven ID en {path.name}")
+        return
+    prefs = load()
+    if wid in prefs["kept"]:
+        print(f"→ Ya está marcado como kept")
+        return
+    tags = fetch_tags(wid)
+    prefs["kept"][wid] = {"path": str(path), "tags": tags,
+                          "time": time.strftime("%Y-%m-%dT%H:%M:%S")}
+    for t in tags:
+        prefs["tag_weights"][t] = prefs["tag_weights"].get(t, 0) + 1.0
+    prefs["tag_count"] = sum(prefs["tag_weights"].values())
+    prefs["discarded"].pop(wid, None)
+    save(prefs)
+    print(f"♥ Kept {wid} ({len(tags)} tags)")
+
+def cmd_discard(path):
+    path = Path(path).expanduser().resolve()
+    wid = wid_from(path)
+    if not wid:
+        print(f"✗ No Wallhaven ID en {path.name}")
+        return
+    prefs = load()
+    prefs["discarded"][wid] = {"path": str(path),
+                               "time": time.strftime("%Y-%m-%dT%H:%M:%S")}
+    if wid in prefs["kept"]:
+        for t in prefs["kept"][wid].get("tags", []):
+            prefs["tag_weights"][t] = prefs["tag_weights"].get(t, 1.0) - 0.5
+            if prefs["tag_weights"].get(t, 0) <= 0:
+                prefs["tag_weights"].pop(t, None)
+        del prefs["kept"][wid]
+    save(prefs)
+    print(f"✕ Discarded {wid}")
+
+def cmd_forget(path):
+    wid = wid_from(path)
+    if not wid:
+        return
+    prefs = load()
+    prefs["kept"].pop(wid, None)
+    prefs["discarded"].pop(wid, None)
+    save(prefs)
+    print(f"Olvidado {wid}")
+
+def cmd_recommend(n=8):
+    prefs = load()
+    if not prefs["tag_weights"]:
+        print("Sin preferencias aún. Descargando random...")
+        subprocess.run([str(DOWNLOADER), "-n", str(n)], timeout=120)
+        return
+    sorted_tags = sorted(prefs["tag_weights"].items(), key=lambda x: -x[1])
+    top_tags = [t for t, _ in sorted_tags[:8]]
+    exclude = {"anime", "digital painting", "artwork", "minimal", "simple background"}
+    candidates = [t for t in top_tags if t not in exclude]
+    if not candidates:
+        chosen = sorted_tags[0][0] if sorted_tags else ""
+    elif random.random() < 0.3:
+        weights = [w for _, w in sorted_tags[:12]]
+        total = sum(weights)
+        r = random.uniform(0, total)
+        cum = 0
+        chosen = sorted_tags[-1][0]
+        for t, w in sorted_tags[:12]:
+            cum += w
+            if r <= cum:
+                chosen = t
+                break
+    else:
+        chosen = random.choice(candidates)
+    print(f"Recomendando basado en: '{chosen}'")
+    purity = "110" if any("sketch" in t for t in top_tags[:3]) else "100"
+    subprocess.run([str(DOWNLOADER), "-n", str(n), "-q", chosen, "--purity", purity], timeout=120)
+    prefs["last_recommend"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    save(prefs)
+
+def cmd_cleanup(age_min=LIFETIME_MIN):
+    prefs = load()
+    now = time.time()
+    cutoff = now - age_min * 60
+    kept = set(prefs["kept"].keys())
+    deleted = 0
+    for f in sorted(WALLPAPER_DIR.iterdir()):
+        if not f.is_file():
+            continue
+        wid = wid_from(f)
+        if wid and wid in kept:
+            continue
+        if f.stat().st_mtime < cutoff:
+            f.unlink()
+            deleted += 1
+            if wid:
+                prefs["discarded"][wid] = {"path": str(f),
+                                           "time": time.strftime("%Y-%m-%dT%H:%M:%S")}
+    prefs["last_cleanup"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    save(prefs)
+    print(f"Limpiados {deleted} wallpapers")
+
+def cmd_status():
+    prefs = load()
+    total = sum(1 for _ in WALLPAPER_DIR.iterdir()) if WALLPAPER_DIR.exists() else 0
+    top = sorted(prefs["tag_weights"].items(), key=lambda x: -x[1])[:10]
+    print(f"En disco: {total}")
+    print(f"♥ Kept: {len(prefs['kept'])}")
+    print(f"✕ Descartados: {len(prefs['discarded'])}")
+    print(f"Tags: {', '.join(f'{t}({w:.0f})' for t,w in top)}")
+    if prefs["last_recommend"]:
+        print(f"Última recomendación: {prefs['last_recommend']}")
+    if prefs["last_cleanup"]:
+        print(f"Último cleanup: {prefs['last_cleanup']}")
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print(__doc__)
+        sys.exit(1)
+    cmd = sys.argv[1]
+    if cmd == "keep" and len(sys.argv) >= 3:
+        cmd_keep(sys.argv[2])
+    elif cmd == "discard" and len(sys.argv) >= 3:
+        cmd_discard(sys.argv[2])
+    elif cmd == "forget" and len(sys.argv) >= 3:
+        cmd_forget(sys.argv[2])
+    elif cmd == "recommend":
+        n = int(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2].isdigit() else 8
+        cmd_recommend(n)
+    elif cmd == "cleanup":
+        m = int(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2].isdigit() else LIFETIME_MIN
+        cmd_cleanup(m)
+    elif cmd == "status":
+        cmd_status()
+    else:
+        print(__doc__)
+        sys.exit(1)

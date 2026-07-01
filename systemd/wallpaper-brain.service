@@ -1,0 +1,9 @@
+[Unit]
+Description=Wallpaper brain cleanup + recommendation
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/wallpaper-brain cleanup
+ExecStart=%h/.local/bin/wallpaper-brain recommend

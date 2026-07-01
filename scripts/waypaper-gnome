@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Wrapper: descarga wallpapers nuevos + Waypaper + GNOME gsettings"""
+import configparser, os, shutil, subprocess, sys, time
+from pathlib import Path
+
+CONFIG = Path.home() / ".config" / "waypaper" / "config.ini"
+DOWNLOADER = Path.home() / ".local" / "bin" / "wallhaven-download"
+BRAIN = Path.home() / ".local" / "bin" / "wallpaper-brain"
+LAST = None
+
+def set_gnome_wallpaper(path):
+    path = Path(path).expanduser()
+    if not path.exists():
+        return
+    uri = f"file://{path.resolve()}"
+    for schema in ["picture-uri-dark", "picture-uri"]:
+        subprocess.run(
+            ["gsettings", "set", "org.gnome.desktop.background", schema, uri],
+            capture_output=True, timeout=5
+        )
+    print(f"  ✓ wallpaper aplicado: {path.name}")
+
+def get_wallpaper_from_config():
+    if not CONFIG.exists():
+        return None
+    cp = configparser.ConfigParser()
+    cp.read(CONFIG)
+    try:
+        raw = cp.get("Settings", "wallpaper", raw=True, fallback="")
+        if raw:
+            return raw.strip().split("\n")[0].strip()
+    except Exception:
+        pass
+    return None
+
+def watch_config():
+    global LAST
+    path = get_wallpaper_from_config()
+    if path and path != LAST:
+        LAST = path
+        set_gnome_wallpaper(path)
+
+def restore():
+    path = get_wallpaper_from_config()
+    if path:
+        set_gnome_wallpaper(path)
+
+def main():
+    if "--restore" in sys.argv or "-r" in sys.argv:
+        restore()
+        return
+
+    waypaper = shutil.which("waypaper") or str(Path.home() / ".local/bin/waypaper")
+    if not waypaper:
+        print("waypaper not found", file=sys.stderr)
+        sys.exit(1)
+
+    # Run brain cleanup + recommend + fresh wallpapers
+    fresh_count = 5
+    if "--no-download" not in sys.argv:
+        if BRAIN.exists():
+            subprocess.run([str(BRAIN), "cleanup", "30"], timeout=30)
+            subprocess.run([str(BRAIN), "recommend", str(fresh_count)], timeout=60)
+
+    # Apply current wallpaper first
+    restore()
+
+    # Launch Waypaper, watch config while it runs
+    args = [a for a in sys.argv[1:] if a not in ("--restore", "-r", "--no-download")]
+    proc = subprocess.Popen([waypaper] + args)
+    try:
+        while proc.poll() is None:
+            watch_config()
+            time.sleep(1)
+    except KeyboardInterrupt:
+        proc.terminate()
+    watch_config()
+
+if __name__ == "__main__":
+    main()
