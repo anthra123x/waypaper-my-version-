@@ -120,6 +120,11 @@ class App(Gtk.Window):
         self.wh_combo.set_active(0)
         self.wh_combo.set_tooltip_text("Wallhaven category to download on refresh")
 
+        # Create save to library button:
+        self.save_button = Gtk.Button(label="♥ Save")
+        self.save_button.connect("clicked", self.on_save_clicked)
+        self.save_button.set_tooltip_text("Save selected wallpaper permanently to library (y)")
+
         # Create refresh button:
         self.refresh_button = Gtk.Button(label=self.txt.msg_refresh)
         self.refresh_button.connect("clicked", self.on_refresh_clicked)
@@ -144,6 +149,7 @@ class App(Gtk.Window):
         self.top_container.pack_start(self.wh_label, expand=False, fill=False, padding=0)
         self.top_container.pack_start(self.wh_combo, expand=False, fill=False, padding=0)
         self.top_container.pack_start(self.refresh_button, expand=False, fill=False, padding=0)
+        self.top_container.pack_start(self.save_button, expand=False, fill=False, padding=0)
         self.top_container.pack_start(self.random_button, expand=False, fill=False, padding=0)
         self.top_container.pack_start(self.options_button, expand=False, fill=False, padding=0)
         self.top_container.pack_start(self.exit_button, expand=False, fill=False, padding=0)
@@ -771,10 +777,14 @@ class App(Gtk.Window):
             if prefs_file.exists():
                 prefs = json.loads(prefs_file.read_text())
                 name = Path(path).stem
-                wid = name[3:] if name.startswith("wh-") else None
-                if wid and wid in prefs.get("kept", {}):
+                if name.startswith("wh-"):
+                    wid = name[3:]
+                else:
+                    import hashlib
+                    wid = "local_" + hashlib.md5(str(path).encode()).hexdigest()[:12]
+                if wid in prefs.get("kept", {}):
                     return "kept"
-                if wid and wid in prefs.get("discarded", {}):
+                if wid in prefs.get("discarded", {}):
                     return "discarded"
         except Exception:
             pass
@@ -972,6 +982,21 @@ class App(Gtk.Window):
         self.load_image_grid()
         self.set_selected_wallpaper(path)
 
+    def _save_wallpaper(self, show_message=True) -> None:
+        """Save selected wallpaper permanently. Keeps it in preferences so cleanup won't delete it."""
+        if self.selected_index >= len(self.image_paths):
+            return
+        wallpaper_path = self.image_paths[self.selected_index]
+        subprocess.Popen([str(Path.home() / ".local/bin/wallpaper-brain"), "keep", str(wallpaper_path)],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.load_image_grid()
+        if show_message:
+            self.show_message("♥ Saved to library")
+
+    def on_save_clicked(self, widget) -> None:
+        """Button handler: save selected wallpaper to library"""
+        self._save_wallpaper()
+
     def on_refresh_clicked(self, widget) -> None:
         """Download new wallpapers from Wallhaven, clear cache, reload"""
         preset_idx = self.wh_combo.get_active()
@@ -1138,6 +1163,9 @@ class App(Gtk.Window):
             subprocess.Popen([str(Path.home() / ".local/bin/wallpaper-brain"), "discard", str(wallpaper_path)],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self.load_image_grid()
+
+        elif event.keyval in self.keys.save_wallpaper:
+            self._save_wallpaper()
 
         # Prevent other default key handling:
         return event.keyval in [Gdk.KEY_Up, Gdk.KEY_Down, Gdk.KEY_Left, Gdk.KEY_Right, Gdk.KEY_Return, Gdk.KEY_KP_Enter, Gdk.KEY_period]

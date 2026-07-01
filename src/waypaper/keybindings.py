@@ -31,6 +31,7 @@ class Keys:
         self.select_wallpaper = [Gdk.keyval_from_name("Return"), Gdk.keyval_from_name("KP_Enter")]
         self.keep_wallpaper = [Gdk.keyval_from_name("K")]
         self.discard_wallpaper = [Gdk.keyval_from_name("d")]
+        self.save_wallpaper = [Gdk.keyval_from_name("y")]
 
     def fill_keys_from_file(self, path):
         """Loading user-defined keybindings from the provided file"""
@@ -54,6 +55,7 @@ class Keys:
         self.hidden_files = self.fill_out_keycodes(keybindings.get("Keybindings", "hidden_files", fallback=self.hidden_files))
         self.search = self.fill_out_keycodes(keybindings.get("Keybindings", "search", fallback=self.search))
         self.include_subfolders = self.fill_out_keycodes(keybindings.get("Keybindings", "include_subfolders", fallback=self.include_subfolders))
+        self.save_wallpaper = self.fill_out_keycodes(keybindings.get("Keybindings", "save_wallpaper", fallback=self.save_wallpaper))
         self.navigation_left = self.fill_out_keycodes(keybindings.get("Keybindings", "navigation_left", fallback=self.navigation_left))
         self.navigation_down = self.fill_out_keycodes(keybindings.get("Keybindings", "navigation_down", fallback=self.navigation_down))
         self.navigation_up = self.fill_out_keycodes(keybindings.get("Keybindings", "navigation_up", fallback=self.navigation_up))

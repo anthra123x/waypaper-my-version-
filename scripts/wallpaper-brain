@@ -9,7 +9,7 @@ Usage:
   wallpaper-brain status
   wallpaper-brain forget <path>
 """
-import json, os, random, subprocess, sys, time, urllib.request, urllib.error
+import hashlib, json, os, random, subprocess, sys, time, urllib.request, urllib.error
 from pathlib import Path
 
 APPDIR = Path.home() / ".config" / "waypaper"
@@ -33,7 +33,10 @@ def save(prefs):
 
 def wid_from(path):
     n = Path(path).stem
-    return n[3:] if n.startswith("wh-") else None
+    if n.startswith("wh-"):
+        return n[3:]
+    local_id = hashlib.md5(str(path).encode()).hexdigest()[:12]
+    return f"local_{local_id}"
 
 def fetch_tags(wid):
     if not wid:
@@ -50,22 +53,21 @@ def fetch_tags(wid):
 def cmd_keep(path):
     path = Path(path).expanduser().resolve()
     wid = wid_from(path)
-    if not wid:
-        print(f"✗ No Wallhaven ID en {path.name}")
-        return
     prefs = load()
     if wid in prefs["kept"]:
         print(f"→ Ya está marcado como kept")
         return
-    tags = fetch_tags(wid)
+    is_local = wid.startswith("local_")
+    tags = [] if is_local else fetch_tags(wid)
     prefs["kept"][wid] = {"path": str(path), "tags": tags,
                           "time": time.strftime("%Y-%m-%dT%H:%M:%S")}
-    for t in tags:
-        prefs["tag_weights"][t] = prefs["tag_weights"].get(t, 0) + 1.0
-    prefs["tag_count"] = sum(prefs["tag_weights"].values())
+    if not is_local:
+        for t in tags:
+            prefs["tag_weights"][t] = prefs["tag_weights"].get(t, 0) + 1.0
+        prefs["tag_count"] = sum(prefs["tag_weights"].values())
     prefs["discarded"].pop(wid, None)
     save(prefs)
-    print(f"♥ Kept {wid} ({len(tags)} tags)")
+    print(f"♥ Kept {wid} ({'local' if is_local else str(len(tags)) + ' tags'})")
 
 def cmd_discard(path):
     path = Path(path).expanduser().resolve()
