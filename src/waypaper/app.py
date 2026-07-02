@@ -5,14 +5,11 @@ import threading
 import subprocess
 import os
 import gi
-import random
-import shutil
-import imageio
 from pathlib import Path
 
 from waypaper.changer import change_wallpaper
 from waypaper.config import Config
-from waypaper.common import get_image_paths, get_wallpaperengine_preview, get_image_name, get_random_file, cache_image, get_cached_image_path, get_wallpaperengine_image_name
+from waypaper import wallhaven
 from waypaper.options import FILL_OPTIONS, SORT_OPTIONS, SORT_DISPLAYS, VIDEO_EXTENSIONS, SWWW_TRANSITION_TYPES, \
     get_monitor_options, LINUX_WALLPAPERENGINE_FILL_OPTIONS, LINUX_WALLPAPERENGINE_CLAMP
 from waypaper.translations import Chinese, English, French, German, Polish, Russian, Belarusian, Spanish
@@ -39,12 +36,22 @@ class App(Gtk.Window):
         self.highlighted_image_row = 0
         self.is_enering_text = False
         self.number_of_resize = 0
+
+        self.wallhaven_items: list = []
+        self.thumbnails: list = []
+        self.image_paths: list = []
+        self.image_names: list = []
+        self.current_page: int = 1
+        self.last_page: int = 1
+        self.total_results: int = 0
+        self._search_timer = None
+
         self.init_ui()
         self.main_box.grab_focus()
         self.keys.fill_keys_from_file(self.cf.keybindings_file)
 
         # Start the image processing in a separate thread:
-        threading.Thread(target=self.process_images).start()
+        threading.Thread(target=self.fetch_wallhaven_gallery).start()
 
 
     def init_ui(self) -> None:
@@ -84,14 +91,16 @@ class App(Gtk.Window):
         self.top_row_alignment = Gtk.Alignment(xalign=0.5, yalign=0.0, xscale=0.5, yscale=0.5)
         self.top_button_box.pack_start(self.top_row_alignment, True, False, 0)
 
-        # Create a button to open folder dialog:
+        # Create a button to open folder dialog (hidden in API mode):
         self.choose_folder_button = Gtk.Button(label=self.txt.msg_changefolder)
         self.choose_folder_button.connect("clicked", self.on_choose_folder_clicked)
+        self.choose_folder_button.set_visible(False)
 
         # Create a search entry:
         self.search_entry = Gtk.Entry()
         self.search_entry.set_placeholder_text(self.txt.msg_search)
         self.search_entry.connect("changed", self.on_search_entry_changed)
+        self.search_entry.get_style_context().add_class("search-entry")
         self.search_entry.connect("focus-in-event", self.on_focus_in)
         self.search_entry.connect("focus-out-event", self.on_focus_out)
 
@@ -114,6 +123,7 @@ class App(Gtk.Window):
 
         # Wallhaven category selector:
         self.wh_label = Gtk.Label(label="Wallhaven:")
+        self.wh_label.get_style_context().add_class("wh-label")
         self.wh_combo = Gtk.ComboBoxText()
         self.wh_presets = ["random", "anime", "manga", "sketch", "general"]
         self.wh_labels = ["Random", "Anime", "Manga", "Sketch", "General"]
@@ -144,6 +154,7 @@ class App(Gtk.Window):
 
         # Group 1: Files (folder, search, sort)
         self.files_box = Gtk.Box(spacing=4)
+        self.files_box.get_style_context().add_class("action-group")
         self.files_box.pack_start(self.choose_folder_button, False, False, 0)
         self.files_box.pack_start(self.search_entry, expand=False, fill=False, padding=0)
         self.files_box.pack_start(self.clear_button, expand=False, fill=False, padding=0)
@@ -151,12 +162,14 @@ class App(Gtk.Window):
 
         # Group 2: Wallhaven (category + refresh)
         self.wh_box = Gtk.Box(spacing=4)
+        self.wh_box.get_style_context().add_class("action-group")
         self.wh_box.pack_start(self.wh_label, expand=False, fill=False, padding=0)
         self.wh_box.pack_start(self.wh_combo, expand=False, fill=False, padding=0)
         self.wh_box.pack_start(self.refresh_button, expand=False, fill=False, padding=0)
 
         # Group 3: Actions (save, random, options, exit)
         self.actions_box = Gtk.Box(spacing=4)
+        self.actions_box.get_style_context().add_class("action-group")
         self.actions_box.pack_start(self.save_button, expand=False, fill=False, padding=0)
         self.actions_box.pack_start(self.random_button, expand=False, fill=False, padding=0)
         self.actions_box.pack_start(self.options_button, expand=False, fill=False, padding=0)
@@ -168,6 +181,7 @@ class App(Gtk.Window):
 
         # Add all groups to the top container:
         self.top_container = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.top_container.get_style_context().add_class("top-bar")
         self.top_container.pack_start(self.files_box, False, False, 0)
         self.top_container.pack_start(sep1, False, False, 8)
         self.top_container.pack_start(self.wh_box, False, False, 0)
@@ -185,11 +199,30 @@ class App(Gtk.Window):
         for key, label in [("all", "All"), ("kept", "♥ Kept"), ("discarded", "✕ Discarded"), ("unreviewed", "◇ New")]:
             btn = Gtk.ToggleButton(label=label)
             btn.set_active(key == self.status_filter)
+            btn.get_style_context().add_class("filter-btn")
             btn.connect("toggled", self.on_status_filter_toggled, key)
             self.filter_buttons[key] = btn
             self.filter_box.pack_start(btn, False, False, 0)
 
         self.main_box.pack_start(self.filter_box, False, False, 0)
+
+        # PAGINATION BAR
+        self.pagination_box = Gtk.Box(spacing=8)
+        self.pagination_box.set_margin_top(2)
+        self.pagination_box.set_margin_bottom(4)
+        self.pagination_box.set_halign(Gtk.Align.CENTER)
+        self.prev_page_button = Gtk.Button(label="← Prev")
+        self.prev_page_button.get_style_context().add_class("filter-btn")
+        self.prev_page_button.connect("clicked", self.on_prev_page)
+        self.page_label = Gtk.Label(label="Page 1 / 1")
+        self.page_label.get_style_context().add_class("status-label")
+        self.next_page_button = Gtk.Button(label="Next →")
+        self.next_page_button.get_style_context().add_class("filter-btn")
+        self.next_page_button.connect("clicked", self.on_next_page)
+        self.pagination_box.pack_start(self.prev_page_button, False, False, 0)
+        self.pagination_box.pack_start(self.page_label, False, False, 4)
+        self.pagination_box.pack_start(self.next_page_button, False, False, 0)
+        self.main_box.pack_start(self.pagination_box, False, False, 0)
 
         # MIDDLE GRID
 
@@ -205,9 +238,10 @@ class App(Gtk.Window):
 
         # Create a grid layout for images:
         self.grid = Gtk.Grid()
-        self.grid.set_row_spacing(0)
-        self.grid.set_column_spacing(0)
+        self.grid.set_row_spacing(8)
+        self.grid.set_column_spacing(8)
         self.center_box.add(self.grid)
+        self.center_box.get_style_context().add_class("grid-container")
         self.scrolled_window.add(self.center_box)
 
         # BACKEND MENU
@@ -274,6 +308,7 @@ class App(Gtk.Window):
         self.status_bar.set_halign(Gtk.Align.CENTER)
         self.status_label = Gtk.Label(label="")
         self.status_label.set_opacity(0.7)
+        self.status_label.get_style_context().add_class("status-label")
         self.status_bar.pack_start(self.status_label, False, False, 0)
         self.main_box.pack_end(self.status_bar, False, False, 0)
 
@@ -465,23 +500,26 @@ class App(Gtk.Window):
         self.filter_gifs_checkbox.connect("toggled", self.on_filter_gifs_toggled)
         self.menu.append(self.filter_gifs_checkbox)
 
-        # Create subfolder toggle:
+        # Create subfolder toggle (hidden in API mode):
         self.include_subfolders_checkbox = Gtk.CheckMenuItem(label=self.txt.msg_subfolders)
         self.include_subfolders_checkbox.set_active(self.cf.include_subfolders)
         self.include_subfolders_checkbox.connect("toggled", self.on_include_subfolders_toggled)
         self.menu.append(self.include_subfolders_checkbox)
+        self.include_subfolders_checkbox.set_visible(False)
 
-        # Create all subfolder toggle:
+        # Create all subfolder toggle (hidden in API mode):
         self.include_all_subfolders_checkbox = Gtk.CheckMenuItem(label=self.txt.msg_all_subfolders)
         self.include_all_subfolders_checkbox.set_active(self.cf.include_all_subfolders)
         self.include_all_subfolders_checkbox.connect("toggled", self.on_include_all_subfolders_toggled)
         self.menu.append(self.include_all_subfolders_checkbox)
+        self.include_all_subfolders_checkbox.set_visible(False)
 
-        # Create hidden toggle:
+        # Create hidden toggle (hidden in API mode):
         self.include_hidden_checkbox = Gtk.CheckMenuItem(label=self.txt.msg_hidden)
         self.include_hidden_checkbox.set_active(self.cf.show_hidden)
         self.include_hidden_checkbox.connect("toggled", self.on_hidden_files_toggled)
         self.menu.append(self.include_hidden_checkbox)
+        self.include_hidden_checkbox.set_visible(False)
 
         # Create show folder path toggle:
         self.show_path_in_tooltip_checkbox = Gtk.CheckMenuItem(label=self.txt.msg_show_path_in_tooltip)
@@ -693,61 +731,84 @@ class App(Gtk.Window):
         dialog.destroy()
 
 
-    def process_images(self) -> None:
-        """Load images from the selected folder, resize them, and arrange into a grid"""
+    def fetch_wallhaven_gallery(self) -> None:
+        """Fetch wallpapers from Wallhaven API and display thumbnails in grid"""
+        try:
+            preset_idx = self.wh_combo.get_active()
+            preset = self.wh_presets[preset_idx] if 0 <= preset_idx < len(self.wh_presets) else "random"
+            query = self.search_entry.get_text().strip()
+            items, meta = wallhaven.search(preset, query, self.current_page)
+        except Exception as e:
+            GLib.idle_add(self.show_message, f"Wallhaven error: {e}")
+            return
 
-        if self.cf.backend == "linux-wallpaperengine":
-            self.image_paths = get_wallpaperengine_preview(self.cf.wallpaperengine_folder)
+        self.wallhaven_items = items
+        self.last_page = meta.last
+        self.total_results = meta.total
+        self.current_page = meta.current
+
+        self.thumbnails = [None] * len(items)
+        self.image_paths = [f"wh-{item.id}" for item in items]
+        self.image_names = [f"wh-{item.id} ({item.resolution})" for item in items]
+
+        prefs = self._load_preferences()
+        self.filtered_indices = self._get_filtered_indices(prefs)
+        if not self.filtered_indices:
+            self.filtered_indices = []
+        self.selected_index = 0
+
+        GLib.idle_add(self._clear_grid)
+        GLib.idle_add(self._update_pagination)
+
+        for i in self.filtered_indices:
+            pixbuf = wallhaven.fetch_thumbnail(items[i].thumb_url)
+            self.thumbnails[i] = pixbuf
+            GLib.idle_add(self._add_thumbnail_to_grid, i)
+
+        GLib.idle_add(self.scroll_to_selected_image)
+        GLib.idle_add(self._update_status_bar)
+
+    def _clear_grid(self) -> None:
+        """Remove all children from the grid"""
+        for child in self.grid.get_children():
+            self.grid.remove(child)
+
+    def _add_thumbnail_to_grid(self, idx: int) -> None:
+        """Add a single thumbnail to the grid at the correct filtered position"""
+        if idx >= len(self.thumbnails) or self.thumbnails[idx] is None:
+            return
+
+        pixbuf = self.thumbnails[idx]
+        item = self.wallhaven_items[idx]
+        name = self.image_names[idx]
+        path = self.image_paths[idx]
+
+        display_pos = self.filtered_indices.index(idx)
+        row = display_pos // self.cf.number_of_columns
+        col = display_pos % self.cf.number_of_columns
+
+        image = Gtk.Image.new_from_pixbuf(pixbuf)
+        image.get_style_context().add_class("grid-image")
+        image.set_tooltip_text(name)
+
+        button = Gtk.Button()
+        button.get_style_context().add_class("grid-button")
+        if idx == self.selected_index:
+            button.set_relief(Gtk.ReliefStyle.NORMAL)
+            button.get_style_context().add_class("highlighted-button")
         else:
-            self.image_paths = get_image_paths(self.cf.backend, self.cf.image_folder_list, self.cf.include_subfolders,
-                                      self.cf.include_all_subfolders, self.cf.show_hidden, self.cf.show_gifs_only)
+            button.set_relief(Gtk.ReliefStyle.NONE)
 
-        # Sort paths:
-        if self.cf.sort_option in ["name", "namerev"]:
-            self.image_paths.sort(reverse=(self.cf.sort_option == "namerev"))
-        if self.cf.sort_option in ["date", "daterev"]:
-            self.image_paths.sort(key=lambda x: os.path.getmtime(x), reverse=(self.cf.sort_option == "daterev"))
-        if self.cf.sort_option == "random":
-            random.shuffle(self.image_paths)
+        status = self._get_wallpaper_status(path)
+        if status == "kept":
+            button.get_style_context().add_class("wallpaper-kept")
+        elif status == "discarded":
+            button.get_style_context().add_class("wallpaper-discarded")
 
-        # Show caching label:
-        self.loading_label = Gtk.Label(label=self.txt.msg_caching)
-        self.bottom_loading_box.add(self.loading_label)
-        self.bottom_loading_box.show_all()
-
-        self.thumbnails = []
-        self.image_names = []
-
-        # Possible removal from the list in the for loop will cause indexing to get thrown off.
-        # This causes image_paths to be the correct number of elements, but image_names will
-        # be off by however many zero byte files are present. To fix this a copy is made to
-        # iterate through and then the image can be saftley removed from the original lis
-        for image_path in list(self.image_paths):
-
-            # Skip zero byte files inside the image_path:
-            if os.path.getsize(image_path) == 0:
-                self.image_paths.remove(image_path)
-                continue
-
-            # If this image is not cached yet, resize and cache it:
-            cached_image_path = get_cached_image_path(image_path, self.cf.cache_dir)
-            if not cached_image_path.exists():
-                cache_image(image_path, self.cf.cache_dir)
-
-            # Load cached thumbnail:
-            thumbnail = GdkPixbuf.Pixbuf.new_from_file(str(cached_image_path))
-            self.thumbnails.append(thumbnail)
-
-            # Get image name, which may or may not include parent folders:
-            if self.cf.backend == 'linux-wallpaperengine':
-                image_name = get_wallpaperengine_image_name(image_path)
-            else:
-                image_name = get_image_name(image_path, self.cf.image_folder_list, self.cf.show_path_in_tooltip)
-            self.image_names.append(image_name)
-
-        # When image processing is done, remove caching label and display the images:
-        self.bottom_loading_box.remove(self.loading_label)
-        GLib.idle_add(self.load_image_grid)
+        button.add(image)
+        self.grid.attach(button, col, row, 1, 1)
+        self.grid.show_all()
+        button.connect("clicked", self.on_image_clicked, idx)
 
 
     def _get_filtered_indices(self, prefs_cache=None) -> list:
@@ -773,51 +834,41 @@ class App(Gtk.Window):
 
 
     def load_image_grid(self) -> None:
-        """Reload the grid of images"""
-
+        """Rebuild the grid from current wallhaven_items and filter state"""
         prefs_cache = self._load_preferences()
         self.filtered_indices = self._get_filtered_indices(prefs_cache)
         if not self.filtered_indices:
-            self.filtered_indices = [0]
+            self.filtered_indices = []
 
         if self.selected_index >= len(self.filtered_indices):
             self.selected_index = max(0, len(self.filtered_indices) - 1)
 
-        thumbnails = [self.thumbnails[i] for i in self.filtered_indices]
-        image_names = [self.image_names[i] for i in self.filtered_indices]
-        image_paths = [self.image_paths[i] for i in self.filtered_indices]
+        self._clear_grid()
 
-        # Clear existing images:
-        for child in self.grid.get_children():
-            self.grid.remove(child)
+        for idx in self.filtered_indices:
+            thumbnail = self.thumbnails[idx] if idx < len(self.thumbnails) else None
+            if thumbnail is None:
+                continue
 
-        current_y = 0
-        current_row_heights = [0] * self.cf.number_of_columns
+            name = self.image_names[idx] if idx < len(self.image_names) else ""
+            path = self.image_paths[idx] if idx < len(self.image_paths) else ""
 
-        for index, [thumbnail, name, path] in enumerate(zip(thumbnails, image_names, image_paths)):
+            display_pos = self.filtered_indices.index(idx)
+            row = display_pos // self.cf.number_of_columns
+            col = display_pos % self.cf.number_of_columns
 
-            row = index // self.cf.number_of_columns
-            column = index % self.cf.number_of_columns
-
-            # Calculate current y coordinate in the scroll window:
-            aspect_ratio = thumbnail.get_width() / thumbnail.get_height()
-            current_row_heights[column] = int(240 / aspect_ratio)
-            if column == 0:
-                current_y += max(current_row_heights) + 10
-                current_row_heights = [0]*self.cf.number_of_columns
-
-            # Create a button with an image and add tooltip:
             image = Gtk.Image.new_from_pixbuf(thumbnail)
             image.set_tooltip_text(name)
+            image.get_style_context().add_class("grid-image")
+
             button = Gtk.Button()
-            if index == self.selected_index:
+            button.get_style_context().add_class("grid-button")
+            if idx == self.selected_index:
                 button.set_relief(Gtk.ReliefStyle.NORMAL)
                 button.get_style_context().add_class("highlighted-button")
-                self.highlighted_image_y = current_y
             else:
                 button.set_relief(Gtk.ReliefStyle.NONE)
 
-            # Add visual indicator for kept/discarded wallpapers
             status = self._get_wallpaper_status(str(path), prefs_cache)
             if status == "kept":
                 button.get_style_context().add_class("wallpaper-kept")
@@ -825,10 +876,8 @@ class App(Gtk.Window):
                 button.get_style_context().add_class("wallpaper-discarded")
 
             button.add(image)
-
-            # Add button to the grid and connect clicked event:
-            self.grid.attach(button, column, row, 1, 1)
-            button.connect("clicked", self.on_image_clicked, path)
+            self.grid.attach(button, col, row, 1, 1)
+            button.connect("clicked", self.on_image_clicked, idx)
 
         self.grid.show_all()
         self.toggle_zen_mode()
@@ -836,17 +885,18 @@ class App(Gtk.Window):
 
 
     def _update_status_bar(self):
-        """Update the status bar with current stats from preferences"""
+        """Update the status bar with API page info and brain stats"""
         prefs = self._load_preferences()
         kept = len(prefs.get("kept", {}))
         discarded = len(prefs.get("discarded", {}))
-        total = len(self.image_paths)
-        filtered = len(self.filtered_indices)
         tag_count = int(prefs.get("tag_count", 0))
         top_tags = sorted(prefs.get("tag_weights", {}).items(), key=lambda x: -x[1])[:3]
         tag_str = " | ".join(f"{t} ({w:.0f})" for t, w in top_tags) if top_tags else "—"
-        total_str = f"Total: {total}" if filtered >= total else f"Total: {total} ({filtered} shown)"
-        self.status_label.set_text(f"{total_str}  |  ♥ {kept}  |  ✕ {discarded}  |  Tags: {tag_count}  |  Top: {tag_str}")
+        page_info = f"Results: {self.total_results} | Page {self.current_page}/{self.last_page}" if self.total_results else "No results"
+        shown = len(self.filtered_indices)
+        if shown < len(self.wallhaven_items):
+            page_info += f" ({shown} shown)"
+        self.status_label.set_text(f"{page_info}  |  ♥ {kept}  |  ✕ {discarded}  |  Tags: {tag_count}  |  Top: {tag_str}")
 
     def _load_preferences(self):
         """Load preferences.json once and return the parsed dict, or empty dict"""
@@ -928,16 +978,8 @@ class App(Gtk.Window):
 
 
     def choose_folder(self) -> None:
-        """Choosing the folder of images, saving the path, and reloading images"""
-        dialog = Gtk.FileChooserDialog(
-            self.txt.msg_choosefolder, self, Gtk.FileChooserAction.SELECT_FOLDER,
-            (Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, self.txt.msg_select, Gtk.ResponseType.OK)
-        )
-        response = dialog.run()
-        if response == Gtk.ResponseType.OK:
-            self.cf.image_folder_list = [Path(dialog.get_filename())]
-            threading.Thread(target=self.process_images).start()
-        dialog.destroy()
+        """No-op in API mode: browsing is always from Wallhaven"""
+        pass
 
 
     def on_choose_folder_clicked(self, widget) -> None:
@@ -957,9 +999,7 @@ class App(Gtk.Window):
         self.load_image_grid()
 
     def on_filter_gifs_toggled(self, toggle) -> None:
-        """Toggle only gifs checkbox via menu"""
-        self.cf.show_gifs_only = toggle.get_active()
-        threading.Thread(target=self.process_images).start()
+        """No-op in API mode: Wallhaven doesn't have a gif-only filter"""
 
 
     def on_zen_mode_toggled(self, toggle) -> None:
@@ -988,43 +1028,27 @@ class App(Gtk.Window):
 
 
     def on_include_subfolders_toggled(self, toggle) -> None:
-        """Toggle subfolders visibility via menu"""
-        self.cf.include_subfolders = toggle.get_active()
-        if not self.cf.include_subfolders:
-            self.cf.include_all_subfolders = False
-        threading.Thread(target=self.process_images).start()
+        """No-op in API mode"""
 
 
     def on_include_all_subfolders_toggled(self, toggle) -> None:
-        """Toggle subfolders visibility via menu"""
-        self.cf.include_all_subfolders = toggle.get_active()
-        if self.cf.include_all_subfolders:
-            self.cf.include_subfolders = True
-        threading.Thread(target=self.process_images).start()
+        """No-op in API mode"""
 
 
     def toggle_include_subfolders(self) -> None:
-        """Toggle subfolders visibility via key"""
-        self.cf.include_subfolders = not self.cf.include_subfolders
-        threading.Thread(target=self.process_images).start()
+        """No-op in API mode"""
 
 
     def on_hidden_files_toggled(self, toggle) -> None:
-        """Toggle visibility of hidden files via menu"""
-        self.cf.show_hidden = toggle.get_active()
-        threading.Thread(target=self.process_images).start()
+        """No-op in API mode"""
 
 
     def toggle_hidden_files(self) -> None:
-        """Toggle visibility of hidden files via keys"""
-        self.cf.show_hidden = not self.cf.show_hidden
-        threading.Thread(target=self.process_images).start()
+        """No-op in API mode"""
 
 
     def on_show_path_in_tooltip_toggled(self, widget) -> None:
-        """Toggle show image relative path in image tooltip"""
-        self.cf.show_path_in_tooltip = not self.cf.show_path_in_tooltip
-        threading.Thread(target=self.process_images).start()
+        """No-op in API mode"""
 
 
     def on_fill_option_changed(self, combo) -> None:
@@ -1038,11 +1062,7 @@ class App(Gtk.Window):
 
 
     def on_sort_option_changed(self, combo) -> None:
-        """Save sort parameter when it is changed"""
-        selected_option = combo.get_active_text()
-        selected_option_num = list(SORT_DISPLAYS.values()).index(selected_option)
-        self.cf.sort_option =  list(SORT_DISPLAYS.keys())[selected_option_num]
-        threading.Thread(target=self.process_images).start()
+        """No-op in API mode: sorting is controlled by Wallhaven API"""
 
 
     def on_backend_option_changed(self, combo) -> None:
@@ -1076,70 +1096,74 @@ class App(Gtk.Window):
 
 
     def _current_full_path(self):
-        """Return the full image path for the current selected_index (filtered view)"""
+        """Return the full image path for the current selected_index (only if exists on disk)"""
         if not self.filtered_indices or self.selected_index >= len(self.filtered_indices):
             return None
         full_idx = self.filtered_indices[self.selected_index]
         if full_idx >= len(self.image_paths):
             return None
-        return self.image_paths[full_idx]
+        path = self.image_paths[full_idx]
+        if os.path.exists(path):
+            return path
+        return None
 
-    def on_image_clicked(self, widget, path: str) -> None:
-        """On clicking an image, set it as a wallpaper and save"""
-        full_index = self.image_paths.index(path)
-        self.selected_index = self.filtered_indices.index(full_index) if full_index in self.filtered_indices else 0
-        self.load_image_grid()
-        self.set_selected_wallpaper(path)
+    def _current_full_idx(self):
+        """Return the unfiltered index for the current selected_index"""
+        if not self.filtered_indices or self.selected_index >= len(self.filtered_indices):
+            return None
+        full_idx = self.filtered_indices[self.selected_index]
+        if full_idx >= len(self.image_paths):
+            return None
+        return full_idx
+
+    def _download_and_set(self, item, idx):
+        """Download full wallpaper to temp and set as wallpaper"""
+        temp_dir = Path.home() / ".cache" / "waypaper" / "temp"
+        ext = item.full_url.rsplit('.', 1)[-1].split('?')[0] if '.' in item.full_url else "jpg"
+        dest = temp_dir / f"wh-{item.id}.{ext}"
+        result = wallhaven.download_full(item.full_url, dest)
+        if result:
+            self.image_paths[idx] = str(dest)
+            GLib.idle_add(lambda: self.set_selected_wallpaper(str(dest)))
+        else:
+            GLib.idle_add(lambda: self.show_message(f"Failed to download {item.id}"))
 
     def _save_wallpaper(self, show_message=True) -> None:
-        """Save selected wallpaper permanently. Keeps it in preferences so cleanup won't delete it."""
-        wallpaper_path = self._current_full_path()
-        if not wallpaper_path:
+        """Save selected wallpaper permanently to library"""
+        if not self.filtered_indices or self.selected_index >= len(self.filtered_indices):
             return
-        threading.Thread(target=self._run_save, args=(wallpaper_path, show_message), daemon=True).start()
+        full_idx = self.filtered_indices[self.selected_index]
+        if full_idx >= len(self.wallhaven_items):
+            return
+        item = self.wallhaven_items[full_idx]
+        threading.Thread(target=self._run_save, args=(item, show_message), daemon=True).start()
 
-    def _run_save(self, path, show_message):
-        """Run wallpaper-brain keep in a thread for save, then reload grid"""
-        try:
-            subprocess.run([str(Path.home() / ".local/bin/wallpaper-brain"), "keep", str(path)],
-                           capture_output=True, timeout=30)
-        except Exception:
-            pass
-        GLib.idle_add(self.load_image_grid)
-        if show_message:
-            GLib.idle_add(self.show_message, "♥ Saved to library")
+    def _run_save(self, item, show_message):
+        """Download full wallpaper to library and register with brain"""
+        library_dir = Path.home() / "Imágenes" / "wallpapers"
+        ext = item.full_url.rsplit('.', 1)[-1].split('?')[0] if '.' in item.full_url else "jpg"
+        dest = library_dir / f"wh-{item.id}.{ext}"
+        result = wallhaven.download_full(item.full_url, dest)
+        if result:
+            try:
+                subprocess.run([str(Path.home() / ".local/bin/wallpaper-brain"), "keep", str(result)],
+                               capture_output=True, timeout=30)
+            except Exception:
+                pass
+            GLib.idle_add(self.load_image_grid)
+            if show_message:
+                GLib.idle_add(self.show_message, "♥ Saved to library")
+        else:
+            GLib.idle_add(lambda: self.show_message(f"Failed to save {item.id}"))
 
     def on_save_clicked(self, widget) -> None:
         """Button handler: save selected wallpaper to library"""
         self._save_wallpaper()
 
     def on_refresh_clicked(self, widget) -> None:
-        """Download new wallpapers from Wallhaven, clear cache, reload"""
-        preset_idx = self.wh_combo.get_active()
-        if 0 <= preset_idx < len(self.wh_presets):
-            preset = self.wh_presets[preset_idx]
-            dl_script = str(Path.home() / ".local/bin/wallhaven-download")
-            cmd = [dl_script, "--preset", preset, "-n", "5"]
-            search_text = self.search_entry.get_text().strip()
-            if search_text:
-                cmd.extend(["-q", search_text])
-            threading.Thread(target=self._run_download, args=(cmd,), daemon=True).start()
-        else:
-            self.clear_cache()
-
-    def _run_download(self, cmd):
-        """Run wallhaven-download in a thread, then clear cache on success"""
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-            if result.returncode != 0:
-                err = result.stderr.strip() or "unknown error"
-                GLib.idle_add(self.show_message, f"Download failed: {err}")
-                return
-            GLib.idle_add(self.clear_cache)
-        except subprocess.TimeoutExpired:
-            GLib.idle_add(self.show_message, "Download timed out (120s)")
-        except FileNotFoundError:
-            GLib.idle_add(self.show_message, f"wallhaven-download not found at {cmd[0]}")
+        """Re-fetch current page of wallpapers from Wallhaven API"""
+        self.current_page = 1
+        threading.Thread(target=self.fetch_wallhaven_gallery, daemon=True).start()
 
     def _run_keep(self, path):
         """Run wallpaper-brain keep in a thread, then reload grid"""
@@ -1158,6 +1182,24 @@ class App(Gtk.Window):
         except Exception:
             pass
         GLib.idle_add(self.load_image_grid)
+
+    def on_prev_page(self, widget) -> None:
+        """Go to previous page of Wallhaven results"""
+        if self.current_page > 1:
+            self.current_page -= 1
+            threading.Thread(target=self.fetch_wallhaven_gallery, daemon=True).start()
+
+    def on_next_page(self, widget) -> None:
+        """Go to next page of Wallhaven results"""
+        if self.current_page < self.last_page:
+            self.current_page += 1
+            threading.Thread(target=self.fetch_wallhaven_gallery, daemon=True).start()
+
+    def _update_pagination(self) -> None:
+        """Update pagination UI controls"""
+        self.page_label.set_text(f"Page {self.current_page} / {self.last_page if self.last_page else 1}")
+        self.prev_page_button.set_sensitive(self.current_page > 1)
+        self.next_page_button.set_sensitive(self.current_page < self.last_page)
 
     def on_hyprland_restart(self, widget) -> None:
         # As in the new Hyprpaper Update Unloading wallpapers is not possible anymore, Hyprpaper needs to be restarted to free up memory
@@ -1199,32 +1241,29 @@ class App(Gtk.Window):
 
 
     def set_random_wallpaper(self) -> None:
-        """Choose a random image and set it as the wallpaper"""
-        if self.cf.backend == "linux-wallpaperengine":
-            new_wallpaper =  get_random_file(self.cf.backend, [self.cf.wallpaperengine_folder], self.cf.include_subfolders,
-                                         self.cf.include_all_subfolders, self.cf.cache_dir)
-        else:
-            new_wallpaper =  get_random_file(self.cf.backend, self.cf.image_folder_list, self.cf.include_subfolders,
-                                         self.cf.include_all_subfolders, self.cf.cache_dir)
+        """Fetch a random wallpaper from Wallhaven API and set it"""
+        threading.Thread(target=self._fetch_random_and_set, daemon=True).start()
 
-        if new_wallpaper:
-            self.cf.select_wallpaper(new_wallpaper)
-        else:
-            return
-        if self.cf.selected_wallpaper:
-            threading.Thread(target=change_wallpaper, args=(self.cf.selected_wallpaper, self.cf, self.cf.selected_monitor)).start()
-        self.cf.attribute_selected_wallpaper()
-        self.cf.save()
-
+    def _fetch_random_and_set(self) -> None:
+        """Thread: get random from API, download, set"""
+        try:
+            items, _ = wallhaven.search("random", page=1)
+            if not items:
+                return
+            item = items[0]
+            temp_dir = Path.home() / ".cache" / "waypaper" / "temp"
+            ext = item.full_url.rsplit('.', 1)[-1].split('?')[0] if '.' in item.full_url else "jpg"
+            dest = temp_dir / f"wh-{item.id}.{ext}"
+            result = wallhaven.download_full(item.full_url, dest)
+            if result:
+                GLib.idle_add(lambda: self.set_selected_wallpaper(str(result)))
+        except Exception as e:
+            GLib.idle_add(lambda: self.show_message(f"Random error: {e}"))
 
     def clear_cache(self) -> None:
-        """Delete cache folder and reprocess the images"""
-        try:
-            shutil.rmtree(self.cf.cache_dir)
-            os.makedirs(self.cf.cache_dir)
-        except OSError as e:
-            print(f"{self.txt.err_cache} '{self.cf.cache_dir}': {e}")
-        threading.Thread(target=self.process_images).start()
+        """Refresh: re-fetch current page of Wallhaven results"""
+        self.current_page = 1
+        threading.Thread(target=self.fetch_wallhaven_gallery, daemon=True).start()
 
 
     def on_key_pressed(self, widget, event) -> bool:
@@ -1301,18 +1340,32 @@ class App(Gtk.Window):
 
         elif event.keyval in self.keys.select_wallpaper:
             wallpaper_path = self._current_full_path()
+            full_idx = self._current_full_idx()
             if wallpaper_path:
-                self.set_selected_wallpaper(wallpaper_path)
+                threading.Thread(target=lambda: self.set_selected_wallpaper(wallpaper_path),
+                                 daemon=True).start()
+            elif full_idx is not None and full_idx < len(self.wallhaven_items):
+                item = self.wallhaven_items[full_idx]
+                threading.Thread(target=self._download_and_set, args=(item, full_idx),
+                                 daemon=True).start()
 
         elif event.keyval in self.keys.keep_wallpaper:
             wallpaper_path = self._current_full_path()
+            full_idx = self._current_full_idx()
             if wallpaper_path:
                 threading.Thread(target=self._run_keep, args=(wallpaper_path,), daemon=True).start()
+            elif full_idx is not None and full_idx < len(self.wallhaven_items):
+                item = self.wallhaven_items[full_idx]
+                threading.Thread(target=self._run_save, args=(item, False), daemon=True).start()
 
         elif event.keyval in self.keys.discard_wallpaper:
             wallpaper_path = self._current_full_path()
+            full_idx = self._current_full_idx()
             if wallpaper_path:
                 threading.Thread(target=self._run_discard, args=(wallpaper_path,), daemon=True).start()
+            elif full_idx is not None and full_idx < len(self.wallhaven_items):
+                placeholder = self.image_paths[full_idx]
+                threading.Thread(target=self._run_discard, args=(placeholder,), daemon=True).start()
 
         elif event.keyval in self.keys.save_wallpaper:
             self._save_wallpaper()
@@ -1322,11 +1375,22 @@ class App(Gtk.Window):
 
 
     def on_search_entry_changed(self, entry, event=None):
-        """This function is triggered when the user types in the search field"""
-        self.load_image_grid()
+        """Debounced search: wait 500ms after typing, then fetch from API"""
+        if self._search_timer:
+            GLib.source_remove(self._search_timer)
+        self._search_timer = GLib.timeout_add(500, self._on_search_timeout)
+
+    def _on_search_timeout(self):
+        """Trigger API search after debounce delay"""
+        self._search_timer = None
+        self.current_page = 1
+        threading.Thread(target=self.fetch_wallhaven_gallery, daemon=True).start()
+        return False
 
     def on_clear_button(self, event):
         self.search_entry.set_text("")
+        self.current_page = 1
+        threading.Thread(target=self.fetch_wallhaven_gallery, daemon=True).start()
         self.main_box.grab_focus()
 
     def on_focus_in(self, widget, event):

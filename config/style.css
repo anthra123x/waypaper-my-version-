@@ -1,13 +1,85 @@
+/* Grid container - padding around wallpaper grid */
+.grid-container {
+    padding: 12px;
+}
+
+/* Grid thumbnail buttons - base style */
+.grid-button {
+    border-radius: 10px;
+    padding: 0;
+    background: transparent;
+    border: 2px solid transparent;
+}
+
+.grid-button:hover {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.12);
+}
+
+/* Selected wallpaper indicator */
 .highlighted-button {
-    background-color: rgba(255, 255, 255, 0.3);
-    border-color: #ffffff;
+    background: alpha(@theme_selected_bg_color, 0.15);
+    border-color: @theme_selected_bg_color;
 }
 
+/* Kept wallpaper indicator */
 .wallpaper-kept {
-    border: 3px solid #2ecc71;
+    border-color: #2ecc71;
+    background: rgba(46, 204, 113, 0.06);
 }
 
+.wallpaper-kept:hover {
+    background: rgba(46, 204, 113, 0.12);
+}
+
+/* Discarded wallpaper indicator */
 .wallpaper-discarded {
-    border: 3px solid #e74c3c;
-    opacity: 0.6;
+    border-color: #e74c3c;
+    opacity: 0.5;
+}
+
+.wallpaper-discarded:hover {
+    opacity: 0.75;
+}
+
+/* Top action groups - subtle rounding for buttons inside */
+.action-group button {
+    border-radius: 6px;
+    padding: 4px 10px;
+}
+
+.action-group button:hover {
+    background: alpha(@theme_selected_bg_color, 0.08);
+}
+
+/* Wallhaven section label accent */
+.wh-label {
+    font-weight: bold;
+    color: @theme_selected_bg_color;
+}
+
+/* Search entry - pill shape */
+.search-entry {
+    border-radius: 14px;
+    padding: 4px 10px;
+}
+
+/* Status filter toggle buttons - pill shape */
+.filter-btn {
+    border-radius: 16px;
+    padding: 3px 14px;
+    margin: 2px;
+    border: 1px solid transparent;
+}
+
+.filter-btn:checked {
+    background: @theme_selected_bg_color;
+    color: @theme_selected_fg_color;
+    font-weight: bold;
+}
+
+/* Status bar - monospace stats */
+.status-label {
+    font-family: monospace;
+    font-size: 11px;
 }
