@@ -11,9 +11,15 @@ __version__ = "2.8"
 
 if os.name == "nt":
     # Windows: start the Flask web server instead of GTK
-    from waypaper.web import start_server
-    start_server()
-    sys.exit(0)
+    try:
+        from waypaper.web import start_server
+        start_server()
+    except Exception as e:
+        import traceback
+        print(f"Waypaper failed to start: {e}", file=sys.stderr)
+        traceback.print_exc()
+        input("Press Enter to exit...")
+    sys.exit(1)
 
 
 # ── Linux / GTK ─────────────────────────────────────────────────────

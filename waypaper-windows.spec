@@ -4,18 +4,16 @@ PyInstaller spec for building waypaper.exe (Windows).
 Produces a single .exe that bundles Flask, web UI, and all dependencies.
 
 Usage:
-    pip install pyinstaller flask
+    pip install pyinstaller
     pyinstaller --clean waypaper-windows.spec
-
-The resulting dist/waypaper.exe is fully standalone.
 """
 
-import sys
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_all
 
 block_cipher = None
 
-# Collect all static files
+# ── Static files ──────────────────────────────────────────────────────
 static_dir = Path("src/waypaper/static")
 static_datas = []
 for f in static_dir.rglob("*"):
@@ -23,6 +21,7 @@ for f in static_dir.rglob("*"):
         rel = f.relative_to(Path("src/waypaper"))
         static_datas.append((str(f), str(rel.parent)))
 
+# ── Analysis ──────────────────────────────────────────────────────────
 a = Analysis(
     ['src/waypaper/__main__.py'],
     pathex=[],
@@ -34,11 +33,6 @@ a = Analysis(
         'waypaper.brain',
         'waypaper.changer_windows',
         'waypaper.wallhaven',
-        'flask',
-        'jinja2',
-        'markupsafe',
-        'werkzeug',
-        'PIL',
     ],
     hookspath=[],
     hooksconfig={},
@@ -54,12 +48,23 @@ a = Analysis(
         'waypaper.common',
         'tkinter',
         'test',
+        'numpy',
+        'matplotlib',
+        'scipy',
+        'pandas',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
     noarchive=False,
 )
+
+# ── Collect all submodules for Flask and its dependencies ─────────────
+for pkg in ('flask', 'werkzeug', 'jinja2', 'markupsafe', 'PIL', 'certifi'):
+    pkg_datas, pkg_binaries, pkg_hidden = collect_all(pkg)
+    a.datas += pkg_datas
+    a.binaries += pkg_binaries
+    a.hiddenimports += pkg_hidden
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
@@ -77,7 +82,7 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,              # Windows GUI app (no terminal window)
+    console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

@@ -19,7 +19,7 @@ dependencies = [
 scripts = { waypaper = "waypaper.__main__:run" }
 
 [project.optional-dependencies]
-windows = ["flask"]
+windows = ["flask", "certifi"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
