@@ -29,9 +29,9 @@ jobs:
         run: |
           pyinstaller --clean waypaper-windows.spec
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - name: Upload .exe to Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
         with:
-          name: waypaper-windows
-          path: dist/waypaper.exe
-          compression-level: 0
+          files: dist/waypaper.exe
+          generate_release_notes: true

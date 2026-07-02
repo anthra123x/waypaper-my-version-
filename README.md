@@ -59,38 +59,9 @@ sudo pacman -S python-gobject gtk3 pipx
 
 ## Instalación — Windows
 
-### Opción 1: .exe descargable (recomendado)
+Descargá el último `waypaper.exe` desde [Releases](https://github.com/anthra123x/waypaper-my-version-/releases) y ejecutalo. No requiere Python ni nada más.
 
-Descargá `waypaper.exe` desde los **Actions** del repo:
-1. Andá a [Actions → Build Windows .exe](https://github.com/anthra123x/waypaper-my-version-/actions/workflows/build-windows.yml)
-2. Hacé clic en el último workflow exitoso
-3. Scrolleá abajo a **Artifacts** y descargá `waypaper-windows.zip`
-4. Descomprimí y ejecutá `waypaper.exe`
-
-No requiere Python ni ninguna dependencia. El .exe es completamente standalone.
-
-> También podés generar tu propio .exe con Python (ver Opción 2).
-
-### Opción 2: desde código fuente (requiere Python 3.11+)
-
-```powershell
-git clone https://github.com/anthra123x/waypaper-my-version-.git
-cd waypaper-my-version-
-pip install . flask
-python -m waypaper
-```
-
-Esto arranca un servidor Flask en `http://localhost:5000` y abre tu navegador.
-
-### Build tu propio .exe
-
-```powershell
-pip install pyinstaller flask
-pip install .
-pyinstaller --clean waypaper-windows.spec
-```
-
-El ejecutable se genera en `dist\waypaper.exe`. Funciona en cualquier PC con Windows 10+.
+> También podés correrlo desde código: `pip install . flask && python -m waypaper`.
 
 ## Uso
 
