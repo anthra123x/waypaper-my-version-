@@ -1,0 +1,32 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install pyinstaller flask pillow
+
+      - run: pyinstaller --clean waypaper-windows.spec
+
+      - name: Upload .exe to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: dist/waypaper.exe
+          asset_name: waypaper-${{ github.ref_name }}.exe
+          tag: ${{ github.ref }}
+          overwrite: true
