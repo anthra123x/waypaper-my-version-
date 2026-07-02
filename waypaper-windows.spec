@@ -9,17 +9,16 @@ Usage:
 """
 
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 block_cipher = None
 
-# ── Static files ──────────────────────────────────────────────────────
-static_dir = Path("src/waypaper/static")
+# ── Static files (dest, source, typecode) ─────────────────────────────
 static_datas = []
-for f in static_dir.rglob("*"):
+for f in Path("src/waypaper/static").rglob("*"):
     if f.is_file():
-        rel = f.relative_to(Path("src/waypaper"))
-        static_datas.append((str(f), str(rel.parent)))
+        rel = str(f.relative_to(Path("src/waypaper").parent))
+        static_datas.append((rel, str(f), 'DATA'))
 
 # ── Analysis ──────────────────────────────────────────────────────────
 a = Analysis(
@@ -40,18 +39,14 @@ a = Analysis(
     excludes=[
         'gi', 'gi.repository', 'PyGObject', 'cairo', 'pangocairo',
         'gtk', 'Gdk', 'Gtk', 'Pango',
-        'waypaper.app',
-        'waypaper.changer',
-        'waypaper.translations',
-        'waypaper.options',
-        'waypaper.keybindings',
-        'waypaper.common',
-        'tkinter',
-        'test',
-        'numpy',
-        'matplotlib',
-        'scipy',
-        'pandas',
+        'waypaper.app', 'waypaper.changer', 'waypaper.translations',
+        'waypaper.options', 'waypaper.keybindings', 'waypaper.common',
+        'tcl', 'tkinter', 'tk',
+        'test', 'unittest',
+        'numpy', 'matplotlib', 'scipy', 'pandas',
+        'setuptools', 'pip', 'wheel',
+        'cv2', 'opencv',
+        'PyQt5', 'PySide2', 'PySide6',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -59,12 +54,15 @@ a = Analysis(
     noarchive=False,
 )
 
-# ── Collect all submodules for Flask and its dependencies ─────────────
+# ── Collect all submodules for Flask + deps ───────────────────────────
 for pkg in ('flask', 'werkzeug', 'jinja2', 'markupsafe', 'PIL', 'certifi'):
-    pkg_datas, pkg_binaries, pkg_hidden = collect_all(pkg)
-    a.datas += pkg_datas
-    a.binaries += pkg_binaries
-    a.hiddenimports += pkg_hidden
+    a.hiddenimports += collect_submodules(pkg)
+
+# ── Collect data files (certifi cacert.pem, Flask templates, etc.) ────
+# collect_data_files returns [(source, dest)] — we convert to (dest, source, 'DATA')
+for pkg in ('certifi', 'flask', 'jinja2'):
+    for src, dest in collect_data_files(pkg):
+        a.datas.append((dest, src, 'DATA'))
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
