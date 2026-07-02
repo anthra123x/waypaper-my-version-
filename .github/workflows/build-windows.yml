@@ -21,8 +21,8 @@ jobs:
       - name: Install dependencies
         shell: pwsh
         run: |
-          pip install pyinstaller flask
-          pip install .
+          pip install pyinstaller
+          pip install .[windows]
 
       - name: Build .exe with PyInstaller
         shell: pwsh
