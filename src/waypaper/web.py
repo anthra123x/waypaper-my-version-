@@ -5,6 +5,7 @@ and changing the Windows wallpaper.
 """
 
 import io
+import sys
 import threading
 import webbrowser
 from pathlib import Path
@@ -15,6 +16,15 @@ from waypaper import wallhaven, brain
 from waypaper.brain import LIBRARY_DIR
 
 app = Flask(__name__, static_folder=None)
+
+
+def _static_dir() -> Path:
+    """Return path to static files, works in dev and PyInstaller bundle."""
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        return Path(sys._MEIPASS) / "waypaper" / "static"
+    return Path(__file__).parent / "static"
+
+
 TEMP_DIR = Path.home() / ".cache" / "waypaper" / "temp"
 
 
@@ -61,9 +71,12 @@ def _library_item_dict(f: Path) -> dict:
 
 @app.route("/")
 def index():
-    return send_from_directory(
-        str(Path(__file__).parent / "static"), "index.html"
-    )
+    return send_from_directory(str(_static_dir()), "index.html")
+
+
+@app.route("/static/<path:filename>")
+def static_files(filename):
+    return send_from_directory(str(_static_dir()), filename)
 
 
 @app.route("/api/search")
