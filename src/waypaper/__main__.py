@@ -1,4 +1,22 @@
-"""Main module that either runs cli commands or starts GUI"""
+"""Main module that either runs cli commands or starts GUI (Linux) or web server (Windows)."""
+
+import os
+import sys
+
+
+__version__ = "2.8"
+
+
+# ── OS dispatch ─────────────────────────────────────────────────────
+
+if os.name == "nt":
+    # Windows: start the Flask web server instead of GTK
+    from waypaper.web import start_server
+    start_server()
+    sys.exit(0)
+
+
+# ── Linux / GTK ─────────────────────────────────────────────────────
 
 import argparse
 import os.path
@@ -15,8 +33,6 @@ from waypaper.config import Config
 from waypaper.options import BACKEND_OPTIONS, FILL_OPTIONS, get_monitor_options
 from waypaper.translations import load_language
 
-
-__version__ = "2.8"
 
 # Get application settings and language package:
 cf = Config()

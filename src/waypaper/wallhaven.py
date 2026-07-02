@@ -8,11 +8,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-import gi
-gi.require_version("GdkPixbuf", "2.0")
-from gi.repository import GdkPixbuf
-
-
 API = "https://wallhaven.cc/api/v1"
 UA = "waypaper-wallhaven/1.0"
 
@@ -91,18 +86,30 @@ def search(preset: str, query: str = "", page: int = 1) -> tuple[list[WallpaperI
     return items, meta
 
 
-def fetch_thumbnail(thumb_url: str) -> Optional[GdkPixbuf.Pixbuf]:
-    """Download a thumbnail from the CDN and return a pixbuf (in memory, no disk)."""
+def fetch_thumbnail(thumb_url: str):
+    """Download a thumbnail from the CDN and return raw bytes.
+
+    Returns a Pixbuf on Linux (gi), raw bytes on Windows.
+    Callers should handle both: on the web path the bytes are sent directly.
+    """
     if not thumb_url:
         return None
     try:
         req = urllib.request.Request(thumb_url, headers={"User-Agent": UA})
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = resp.read()
-        loader = GdkPixbuf.PixbufLoader()
-        loader.write(data)
-        loader.close()
-        return loader.get_pixbuf()
+
+        # On Linux we return a GdkPixbuf; on Windows raw bytes.
+        try:
+            import gi
+            gi.require_version("GdkPixbuf", "2.0")
+            from gi.repository import GdkPixbuf
+            loader = GdkPixbuf.PixbufLoader()
+            loader.write(data)
+            loader.close()
+            return loader.get_pixbuf()
+        except (ImportError, ValueError):
+            return data
     except Exception:
         return None
 

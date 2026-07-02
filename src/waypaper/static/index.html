@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Waypaper — Wallpaper Browser</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div id="app">
+  <!-- Status bar -->
+  <div id="status-bar">
+    <span id="status-text">Loading…</span>
+    <span id="status-count"></span>
+  </div>
+
+  <!-- Toolbar -->
+  <div id="toolbar">
+    <div id="mode-switcher">
+      <button id="btn-search" class="mode-btn active" data-mode="search">Search</button>
+      <button id="btn-library" class="mode-btn" data-mode="library">Library</button>
+    </div>
+    <div id="search-controls">
+      <input type="text" id="search-input" placeholder="Search tags…" disabled>
+      <select id="preset-select">
+        <option value="random">Random</option>
+        <option value="toplist">Toplist</option>
+        <option value="hot">Hot</option>
+        <option value="latest">Latest</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- Grid -->
+  <div id="grid"></div>
+
+  <!-- Pagination -->
+  <div id="pagination"></div>
+
+  <!-- Preview modal -->
+  <div id="preview-overlay" class="hidden">
+    <div id="preview-modal">
+      <div id="preview-image-container">
+        <img id="preview-image" src="" alt="preview">
+        <div id="preview-loader" class="hidden">Loading…</div>
+      </div>
+      <div id="preview-info">
+        <span id="preview-id"></span>
+        <span id="preview-tags"></span>
+      </div>
+      <div id="preview-actions">
+        <button id="btn-set" class="btn-primary">Set Wallpaper</button>
+        <button id="btn-save" class="btn-secondary">Save to Library</button>
+        <button id="btn-discard" class="btn-danger">Discard</button>
+        <button id="btn-delete" class="btn-danger hidden">Delete</button>
+        <button id="btn-cancel" class="btn-cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
