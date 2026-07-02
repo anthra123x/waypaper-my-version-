@@ -841,10 +841,12 @@ class App(Gtk.Window):
         kept = len(prefs.get("kept", {}))
         discarded = len(prefs.get("discarded", {}))
         total = len(self.image_paths)
+        filtered = len(self.filtered_indices)
         tag_count = int(prefs.get("tag_count", 0))
         top_tags = sorted(prefs.get("tag_weights", {}).items(), key=lambda x: -x[1])[:3]
         tag_str = " | ".join(f"{t} ({w:.0f})" for t, w in top_tags) if top_tags else "—"
-        self.status_label.set_text(f"Total: {total}  |  ♥ {kept}  |  ✕ {discarded}  |  Tags learned: {tag_count}  |  Top: {tag_str}")
+        total_str = f"Total: {total}" if filtered >= total else f"Total: {total} ({filtered} shown)"
+        self.status_label.set_text(f"{total_str}  |  ♥ {kept}  |  ✕ {discarded}  |  Tags: {tag_count}  |  Top: {tag_str}")
 
     def _load_preferences(self):
         """Load preferences.json once and return the parsed dict, or empty dict"""
