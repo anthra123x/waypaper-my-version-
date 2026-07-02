@@ -35,6 +35,7 @@ class App(Gtk.Window):
         self.connect("delete-event", Gtk.main_quit)
         self.selected_index = 0
         self.filtered_indices = []
+        self.status_filter = "all"
         self.highlighted_image_row = 0
         self.is_enering_text = False
         self.number_of_resize = 0
@@ -173,6 +174,22 @@ class App(Gtk.Window):
         self.top_container.pack_start(sep2, False, False, 8)
         self.top_container.pack_start(self.actions_box, False, False, 0)
         self.top_row_alignment.add(self.top_container)
+
+        # STATUS FILTER BAR
+        self.filter_box = Gtk.Box(spacing=4)
+        self.filter_box.set_margin_top(4)
+        self.filter_box.set_margin_bottom(2)
+        self.filter_box.set_halign(Gtk.Align.CENTER)
+
+        self.filter_buttons = {}
+        for key, label in [("all", "All"), ("kept", "♥ Kept"), ("discarded", "✕ Discarded"), ("unreviewed", "◇ New")]:
+            btn = Gtk.ToggleButton(label=label)
+            btn.set_active(key == self.status_filter)
+            btn.connect("toggled", self.on_status_filter_toggled, key)
+            self.filter_buttons[key] = btn
+            self.filter_box.pack_start(btn, False, False, 0)
+
+        self.main_box.pack_start(self.filter_box, False, False, 0)
 
         # MIDDLE GRID
 
@@ -723,18 +740,33 @@ class App(Gtk.Window):
         GLib.idle_add(self.load_image_grid)
 
 
-    def _get_filtered_indices(self) -> list:
-        """Return indices of items matching the current search query"""
+    def _get_filtered_indices(self, prefs_cache=None) -> list:
+        """Return indices of items matching search query and status filter"""
         search_query = self.search_entry.get_text().lower()
-        if not search_query:
-            return list(range(len(self.image_paths)))
-        return [i for i, name in enumerate(self.image_names) if search_query in name.lower()]
+        if prefs_cache is None:
+            prefs_cache = self._load_preferences()
+
+        result = []
+        for i, name in enumerate(self.image_names):
+            if search_query and search_query not in name.lower():
+                continue
+            if self.status_filter != "all":
+                path = self.image_paths[i]
+                status = self._get_wallpaper_status(path, prefs_cache)
+                if self.status_filter == "unreviewed":
+                    if status is not None:
+                        continue
+                elif status != self.status_filter:
+                    continue
+            result.append(i)
+        return result
 
 
     def load_image_grid(self) -> None:
         """Reload the grid of images"""
 
-        self.filtered_indices = self._get_filtered_indices()
+        prefs_cache = self._load_preferences()
+        self.filtered_indices = self._get_filtered_indices(prefs_cache)
         if not self.filtered_indices:
             self.filtered_indices = [0]
 
@@ -751,8 +783,6 @@ class App(Gtk.Window):
 
         current_y = 0
         current_row_heights = [0] * self.cf.number_of_columns
-
-        prefs_cache = self._load_preferences()
 
         for index, [thumbnail, name, path] in enumerate(zip(thumbnails, image_names, image_paths)):
 
@@ -891,6 +921,16 @@ class App(Gtk.Window):
         self.choose_folder()
         self.cf.save()
 
+
+    def on_status_filter_toggled(self, toggle, key) -> None:
+        """Toggle status filter: all/kept/discarded/unreviewed"""
+        if not toggle.get_active():
+            return
+        self.status_filter = key
+        for k, btn in self.filter_buttons.items():
+            if k != key:
+                btn.set_active(False)
+        self.load_image_grid()
 
     def on_filter_gifs_toggled(self, toggle) -> None:
         """Toggle only gifs checkbox via menu"""
