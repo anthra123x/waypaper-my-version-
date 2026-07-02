@@ -3,6 +3,7 @@
 import json
 import threading
 import subprocess
+import shutil
 import os
 import gi
 from pathlib import Path
@@ -32,7 +33,7 @@ class App(Gtk.Window):
         self.connect("delete-event", Gtk.main_quit)
         self.selected_index = 0
         self.filtered_indices = []
-        self.status_filter = "all"
+        self.status_filter = "kept"
         self.highlighted_image_row = 0
         self.is_enering_text = False
         self.number_of_resize = 0
@@ -45,13 +46,24 @@ class App(Gtk.Window):
         self.last_page: int = 1
         self.total_results: int = 0
         self._search_timer = None
+        self.is_library_mode = False
+        self._preview_dialog = None
 
         self.init_ui()
         self.main_box.grab_focus()
         self.keys.fill_keys_from_file(self.cf.keybindings_file)
 
-        # Start the image processing in a separate thread:
-        threading.Thread(target=self.fetch_wallhaven_gallery).start()
+        # Start with library view (saved wallpapers); fall back to API if empty:
+        self.status_filter = "kept"
+        threading.Thread(target=self._load_library_gallery).start()
+        # Clean up temp cache from previous sessions:
+        temp_dir = Path.home() / ".cache" / "waypaper" / "temp"
+        if temp_dir.exists():
+            for f in temp_dir.glob("wh-*"):
+                try:
+                    f.unlink()
+                except Exception:
+                    pass
 
 
     def init_ui(self) -> None:
@@ -132,11 +144,6 @@ class App(Gtk.Window):
         self.wh_combo.set_active(0)
         self.wh_combo.set_tooltip_text("Wallhaven category to download on refresh")
 
-        # Create save to library button:
-        self.save_button = Gtk.Button(label="♥ Save")
-        self.save_button.connect("clicked", self.on_save_clicked)
-        self.save_button.set_tooltip_text("Save selected wallpaper permanently to library (y)")
-
         # Create refresh button:
         self.refresh_button = Gtk.Button(label=self.txt.msg_refresh)
         self.refresh_button.connect("clicked", self.on_refresh_clicked)
@@ -167,10 +174,9 @@ class App(Gtk.Window):
         self.wh_box.pack_start(self.wh_combo, expand=False, fill=False, padding=0)
         self.wh_box.pack_start(self.refresh_button, expand=False, fill=False, padding=0)
 
-        # Group 3: Actions (save, random, options, exit)
+        # Group 3: Actions (random, options, exit)
         self.actions_box = Gtk.Box(spacing=4)
         self.actions_box.get_style_context().add_class("action-group")
-        self.actions_box.pack_start(self.save_button, expand=False, fill=False, padding=0)
         self.actions_box.pack_start(self.random_button, expand=False, fill=False, padding=0)
         self.actions_box.pack_start(self.options_button, expand=False, fill=False, padding=0)
         self.actions_box.pack_start(self.exit_button, expand=False, fill=False, padding=0)
@@ -200,9 +206,10 @@ class App(Gtk.Window):
             btn = Gtk.ToggleButton(label=label)
             btn.set_active(key == self.status_filter)
             btn.get_style_context().add_class("filter-btn")
-            btn.connect("toggled", self.on_status_filter_toggled, key)
             self.filter_buttons[key] = btn
             self.filter_box.pack_start(btn, False, False, 0)
+        for key, btn in self.filter_buttons.items():
+            btn.connect("toggled", self.on_status_filter_toggled, key)
 
         self.main_box.pack_start(self.filter_box, False, False, 0)
 
@@ -742,6 +749,7 @@ class App(Gtk.Window):
             GLib.idle_add(self.show_message, f"Wallhaven error: {e}")
             return
 
+        self.is_library_mode = False
         self.wallhaven_items = items
         self.last_page = meta.last
         self.total_results = meta.total
@@ -811,11 +819,65 @@ class App(Gtk.Window):
         button.connect("clicked", self.on_image_clicked, idx)
 
 
+    def _load_library_gallery(self) -> None:
+        """Load locally saved wallpapers from ~/Imágenes/wallpapers/ into the grid"""
+        print(f"[waypaper] _load_library_gallery starting")
+        library_dir = Path.home() / "Imágenes" / "wallpapers"
+        kept_ids = set(self._load_preferences().get("kept", {}).keys())
+        files = sorted(library_dir.glob("wh-*.jpg")) + sorted(library_dir.glob("wh-*.png"))
+        if kept_ids:
+            files = [f for f in files if f.stem[3:] in kept_ids]
+        print(f"[waypaper]  → found {len(files)} files in brain-kept")
+        if not files:
+            GLib.idle_add(self._clear_grid)
+            GLib.idle_add(self.show_message, "No saved wallpapers in library")
+            return
+
+        items = []
+        pixbufs = []
+        names = []
+        paths = []
+
+        for f in files:
+            name = f.stem
+            names.append(name)
+            paths.append(str(f))
+            try:
+                pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_size(str(f), 250, 188)
+            except Exception:
+                pixbuf = None
+            pixbufs.append(pixbuf)
+            item = wallhaven.WallpaperItem(
+                id=name[3:] if name.startswith("wh-") else name,
+                thumb_url="", full_url="",
+                tags=[], resolution="",
+            )
+            items.append(item)
+
+        self.is_library_mode = True
+        self.wallhaven_items = items
+        self.thumbnails = pixbufs
+        self.image_paths = paths
+        self.image_names = names
+        self.last_page = 1
+        self.total_results = len(items)
+        self.current_page = 1
+        self.filtered_indices = list(range(len(items)))
+        self.selected_index = 0
+
+        GLib.idle_add(self._clear_grid)
+        GLib.idle_add(self._update_pagination)
+        GLib.idle_add(self.load_image_grid)
+
     def _get_filtered_indices(self, prefs_cache=None) -> list:
         """Return indices of items matching search query and status filter"""
         search_query = self.search_entry.get_text().lower()
         if prefs_cache is None:
             prefs_cache = self._load_preferences()
+
+        if self.is_library_mode:
+            return [i for i, name in enumerate(self.image_names)
+                    if not search_query or search_query in name.lower()]
 
         result = []
         for i, name in enumerate(self.image_names):
@@ -885,17 +947,25 @@ class App(Gtk.Window):
 
 
     def _update_status_bar(self):
-        """Update the status bar with API page info and brain stats"""
+        """Update the status bar with library/API info and brain stats"""
         prefs = self._load_preferences()
         kept = len(prefs.get("kept", {}))
         discarded = len(prefs.get("discarded", {}))
         tag_count = int(prefs.get("tag_count", 0))
         top_tags = sorted(prefs.get("tag_weights", {}).items(), key=lambda x: -x[1])[:3]
         tag_str = " | ".join(f"{t} ({w:.0f})" for t, w in top_tags) if top_tags else "—"
-        page_info = f"Results: {self.total_results} | Page {self.current_page}/{self.last_page}" if self.total_results else "No results"
-        shown = len(self.filtered_indices)
-        if shown < len(self.wallhaven_items):
-            page_info += f" ({shown} shown)"
+
+        if self.is_library_mode:
+            shown = len(self.filtered_indices)
+            page_info = f"Library: {self.total_results} wallpapers"
+            if shown < self.total_results:
+                page_info += f" ({shown} shown)"
+        else:
+            page_info = f"Results: {self.total_results} | Page {self.current_page}/{self.last_page}" if self.total_results else "No results"
+            shown = len(self.filtered_indices)
+            if shown < len(self.wallhaven_items):
+                page_info += f" ({shown} shown)"
+
         self.status_label.set_text(f"{page_info}  |  ♥ {kept}  |  ✕ {discarded}  |  Tags: {tag_count}  |  Top: {tag_str}")
 
     def _load_preferences(self):
@@ -996,7 +1066,14 @@ class App(Gtk.Window):
         for k, btn in self.filter_buttons.items():
             if k != key:
                 btn.set_active(False)
-        self.load_image_grid()
+        if key == "kept":
+            threading.Thread(target=self._load_library_gallery, daemon=True).start()
+        else:
+            if self.is_library_mode:
+                self.is_library_mode = False
+                threading.Thread(target=self.fetch_wallhaven_gallery, daemon=True).start()
+            else:
+                self.load_image_grid()
 
     def on_filter_gifs_toggled(self, toggle) -> None:
         """No-op in API mode: Wallhaven doesn't have a gif-only filter"""
@@ -1116,6 +1193,189 @@ class App(Gtk.Window):
             return None
         return full_idx
 
+    def on_image_clicked(self, widget, idx):
+        """Click thumbnail → show preview dialog with Set/Save actions"""
+        print(f"[waypaper] Clicked image idx={idx}")
+        if idx >= len(self.wallhaven_items):
+            print(f"[waypaper]  → idx out of range (len={len(self.wallhaven_items)})")
+            return
+
+        item = self.wallhaven_items[idx]
+        path = self.image_paths[idx] if idx < len(self.image_paths) else None
+        print(f"[waypaper]  → item={item.id}, path={path}")
+
+        if path and os.path.exists(path):
+            print(f"[waypaper]  → local file exists, opening preview dialog")
+            self._show_preview_dialog(path, item, idx)
+            return
+
+        print(f"[waypaper]  → downloading from {item.full_url}")
+        GLib.idle_add(lambda: self.status_label.set_text(f"Downloading wh-{item.id}..."))
+        threading.Thread(
+            target=self._download_then_preview,
+            args=(item, idx), daemon=True
+        ).start()
+
+    def _download_then_preview(self, item, idx):
+        """Download full image to temp, then show preview dialog"""
+        print(f"[waypaper] _download_then_preview: item={item.id}")
+        temp_dir = Path.home() / ".cache" / "waypaper" / "temp"
+        ext = item.full_url.rsplit('.', 1)[-1].split('?')[0] if '.' in item.full_url else "jpg"
+        if not item.full_url:
+            print(f"[waypaper]  → ERROR: empty full_url for {item.id}")
+            GLib.idle_add(lambda: self.status_label.set_text(f"No download URL for wh-{item.id}"))
+            return
+        dest = temp_dir / f"wh-{item.id}.{ext}"
+        print(f"[waypaper]  → downloading to {dest}")
+        result = wallhaven.download_full(item.full_url, dest)
+        print(f"[waypaper]  → download result: {result}")
+        if result:
+            self.image_paths[idx] = str(dest)
+            GLib.idle_add(self._show_preview_dialog, str(dest), item, idx)
+        else:
+            GLib.idle_add(lambda: self.status_label.set_text(f"Failed to download wh-{item.id}"))
+
+    def _show_preview_dialog(self, path, item, idx):
+        """Display modal preview with Set Wallpaper / Save to Library / Cancel"""
+        print(f"[waypaper] _show_preview_dialog: path={path}, item={item.id}")
+        try:
+            win = Gtk.Window(title=f"wh-{item.id}")
+            win.set_transient_for(self)
+            win.set_modal(True)
+            win.set_default_size(780, 680)
+            win.set_position(Gtk.WindowPosition.CENTER_ON_PARENT)
+            win.set_resizable(True)
+            win.set_destroy_with_parent(True)
+            vbox = Gtk.VBox(spacing=6)
+            vbox.set_border_width(8)
+            win.add(vbox)
+
+            try:
+                p = GdkPixbuf.Pixbuf.new_from_file(str(path))
+                max_w, max_h = 720, 520
+                w, h = p.get_width(), p.get_height()
+                scale = min(max_w / w, max_h / h, 1.0)
+                if scale < 1.0:
+                    p = p.scale_simple(int(w * scale), int(h * scale),
+                                       GdkPixbuf.InterpType.BILINEAR)
+                preview = Gtk.Image.new_from_pixbuf(p)
+            except Exception as e:
+                print(f"[waypaper]  → image load error: {e}")
+                preview = Gtk.Image.new_from_icon_name("image-x-generic", Gtk.IconSize.DIALOG)
+
+            frame = Gtk.Frame()
+            frame.set_shadow_type(Gtk.ShadowType.IN)
+            frame.add(preview)
+            vbox.pack_start(frame, True, True, 0)
+
+            info = Gtk.Box(spacing=16)
+            info.set_halign(Gtk.Align.CENTER)
+            info.set_margin_top(6)
+            info.pack_start(Gtk.Label(label=f"wh-{item.id}"), False, False, 0)
+            res = getattr(item, 'resolution', None) or ""
+            if res:
+                info.pack_start(Gtk.Label(label=f"Resolution: {res}"), False, False, 0)
+            vbox.pack_start(info, False, False, 0)
+
+            tags = getattr(item, 'tags', None) or []
+            if tags:
+                tb = Gtk.Box(spacing=4)
+                tb.set_halign(Gtk.Align.CENTER)
+                for tag in tags[:12]:
+                    name = tag if isinstance(tag, str) else tag.get("name", str(tag))
+                    badge = Gtk.Label(label=name)
+                    badge.get_style_context().add_class("tag-badge")
+                    tb.pack_start(badge, False, False, 0)
+                vbox.pack_start(tb, False, False, 4)
+
+            btnb = Gtk.Box(spacing=8)
+            btnb.set_halign(Gtk.Align.CENTER)
+            btnb.set_margin_top(8)
+            btnb.set_margin_bottom(8)
+
+            set_btn = Gtk.Button(label="Set Wallpaper")
+            set_btn.get_style_context().add_class("suggested-action")
+            set_btn.connect("clicked", lambda b: self._preview_set(item, idx, path, win))
+            btnb.pack_start(set_btn, False, False, 0)
+
+            save_btn = Gtk.Button(label="♥ Save to Library")
+            save_btn.get_style_context().add_class("suggested-action")
+            save_btn.connect("clicked", lambda b: self._preview_save(item, path, win))
+            btnb.pack_start(save_btn, False, False, 0)
+
+            if self.is_library_mode:
+                delete_btn = Gtk.Button(label="✕ Delete from Library")
+                delete_btn.connect("clicked", lambda b: self._preview_delete(item, idx, path, win))
+                btnb.pack_start(delete_btn, False, False, 0)
+
+            cancel_btn = Gtk.Button(label="Cancel")
+            cancel_btn.connect("clicked", lambda b: win.destroy())
+            btnb.pack_start(cancel_btn, False, False, 0)
+
+            vbox.pack_start(btnb, False, False, 0)
+            self.status_label.set_text("")
+
+            win.connect("destroy", lambda d: setattr(self, '_preview_dialog', None))
+
+            win.show_all()
+            win.present()
+            self._preview_dialog = win
+        except Exception as e:
+            print(f"[waypaper] Preview dialog error: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _preview_set(self, item, idx, path, dialog):
+        """Set wallpaper action from preview dialog"""
+        dialog.destroy()
+        self.set_selected_wallpaper(path)
+
+    def _preview_save(self, item, path, dialog):
+        """Save to library action from preview dialog"""
+        dialog.destroy()
+        threading.Thread(target=self._run_save_path, args=(path,), daemon=True).start()
+
+    def _preview_delete(self, item, idx, path, dialog):
+        """Delete from library action from preview dialog"""
+        dialog.destroy()
+        threading.Thread(target=self._run_delete_path, args=(path,), daemon=True).start()
+
+    def _run_delete_path(self, path):
+        """Delete a library wallpaper from disk + brain discard"""
+        src = Path(path)
+        library_dir = Path.home() / "Imágenes" / "wallpapers"
+        if src.parent == library_dir:
+            try:
+                src.unlink()
+                print(f"[waypaper] Deleted {src}")
+            except Exception as e:
+                print(f"[waypaper] Could not delete {src}: {e}")
+        try:
+            subprocess.run([str(Path.home() / ".local/bin/wallpaper-brain"), "discard", str(src)],
+                           capture_output=True, timeout=30)
+        except Exception:
+            pass
+        GLib.idle_add(self._load_library_gallery)
+
+    def _run_save_path(self, path):
+        """Save a local file to library + wallpaper-brain keep"""
+        library_dir = Path.home() / "Imágenes" / "wallpapers"
+        src = Path(path)
+        dest = library_dir / src.name
+        if src != dest and not dest.exists():
+            try:
+                shutil.copy2(str(src), str(dest))
+            except Exception:
+                pass
+        save_path = dest if dest.exists() else src
+        try:
+            subprocess.run([str(Path.home() / ".local/bin/wallpaper-brain"), "keep", str(save_path)],
+                           capture_output=True, timeout=30)
+        except Exception:
+            pass
+        GLib.idle_add(self.load_image_grid)
+        GLib.idle_add(self.show_message, "♥ Saved to library")
+
     def _download_and_set(self, item, idx):
         """Download full wallpaper to temp and set as wallpaper"""
         temp_dir = Path.home() / ".cache" / "waypaper" / "temp"
@@ -1139,11 +1399,17 @@ class App(Gtk.Window):
         threading.Thread(target=self._run_save, args=(item, show_message), daemon=True).start()
 
     def _run_save(self, item, show_message):
-        """Download full wallpaper to library and register with brain"""
+        """Download full wallpaper to library and register with brain.
+        If already in library (local item), just run brain keep."""
         library_dir = Path.home() / "Imágenes" / "wallpapers"
         ext = item.full_url.rsplit('.', 1)[-1].split('?')[0] if '.' in item.full_url else "jpg"
         dest = library_dir / f"wh-{item.id}.{ext}"
-        result = wallhaven.download_full(item.full_url, dest)
+
+        if dest.exists():
+            result = str(dest)
+        else:
+            result = wallhaven.download_full(item.full_url, dest) if item.full_url else None
+
         if result:
             try:
                 subprocess.run([str(Path.home() / ".local/bin/wallpaper-brain"), "keep", str(result)],
@@ -1155,10 +1421,6 @@ class App(Gtk.Window):
                 GLib.idle_add(self.show_message, "♥ Saved to library")
         else:
             GLib.idle_add(lambda: self.show_message(f"Failed to save {item.id}"))
-
-    def on_save_clicked(self, widget) -> None:
-        """Button handler: save selected wallpaper to library"""
-        self._save_wallpaper()
 
     def on_refresh_clicked(self, widget) -> None:
         """Re-fetch current page of wallpapers from Wallhaven API"""
@@ -1175,13 +1437,24 @@ class App(Gtk.Window):
         GLib.idle_add(self.load_image_grid)
 
     def _run_discard(self, path):
-        """Run wallpaper-brain discard in a thread, then reload grid"""
+        """Run wallpaper-brain discard, delete library file if in local mode, then reload grid"""
         try:
             subprocess.run([str(Path.home() / ".local/bin/wallpaper-brain"), "discard", str(path)],
                            capture_output=True, timeout=30)
         except Exception:
             pass
-        GLib.idle_add(self.load_image_grid)
+        library_dir = Path.home() / "Imágenes" / "wallpapers"
+        src = Path(path)
+        if src.parent == library_dir:
+            try:
+                src.unlink()
+                print(f"[waypaper] Deleted library file: {src}")
+            except Exception as e:
+                print(f"[waypaper] Could not delete {src}: {e}")
+        if self.is_library_mode:
+            GLib.idle_add(self._load_library_gallery)
+        else:
+            GLib.idle_add(self.load_image_grid)
 
     def on_prev_page(self, widget) -> None:
         """Go to previous page of Wallhaven results"""
@@ -1196,7 +1469,11 @@ class App(Gtk.Window):
             threading.Thread(target=self.fetch_wallhaven_gallery, daemon=True).start()
 
     def _update_pagination(self) -> None:
-        """Update pagination UI controls"""
+        """Update pagination UI controls (hidden in library mode)"""
+        if self.is_library_mode:
+            self.pagination_box.set_visible(False)
+            return
+        self.pagination_box.set_visible(True)
         self.page_label.set_text(f"Page {self.current_page} / {self.last_page if self.last_page else 1}")
         self.prev_page_button.set_sensitive(self.current_page > 1)
         self.next_page_button.set_sensitive(self.current_page < self.last_page)
