@@ -34,6 +34,7 @@ class App(Gtk.Window):
         self.set_default_size(820, 600)
         self.connect("delete-event", Gtk.main_quit)
         self.selected_index = 0
+        self.filtered_indices = []
         self.highlighted_image_row = 0
         self.is_enering_text = False
         self.number_of_resize = 0
@@ -140,19 +141,37 @@ class App(Gtk.Window):
         self.exit_button.connect("clicked", self.on_exit_clicked)
         self.exit_button.set_tooltip_text(self.txt.tip_exit)
 
-        # Add all top objects to the container:
-        self.top_container = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        self.top_container.pack_start(self.choose_folder_button, False, False, 0)
-        self.top_container.pack_start(self.search_entry, expand=False, fill=False, padding=0)
-        self.top_container.pack_start(self.clear_button, expand=False, fill=False, padding=0)
-        self.top_container.pack_start(self.sort_combo, expand=False, fill=False, padding=0)
-        self.top_container.pack_start(self.wh_label, expand=False, fill=False, padding=0)
-        self.top_container.pack_start(self.wh_combo, expand=False, fill=False, padding=0)
-        self.top_container.pack_start(self.refresh_button, expand=False, fill=False, padding=0)
-        self.top_container.pack_start(self.save_button, expand=False, fill=False, padding=0)
-        self.top_container.pack_start(self.random_button, expand=False, fill=False, padding=0)
-        self.top_container.pack_start(self.options_button, expand=False, fill=False, padding=0)
-        self.top_container.pack_start(self.exit_button, expand=False, fill=False, padding=0)
+        # Group 1: Files (folder, search, sort)
+        self.files_box = Gtk.Box(spacing=4)
+        self.files_box.pack_start(self.choose_folder_button, False, False, 0)
+        self.files_box.pack_start(self.search_entry, expand=False, fill=False, padding=0)
+        self.files_box.pack_start(self.clear_button, expand=False, fill=False, padding=0)
+        self.files_box.pack_start(self.sort_combo, expand=False, fill=False, padding=0)
+
+        # Group 2: Wallhaven (category + refresh)
+        self.wh_box = Gtk.Box(spacing=4)
+        self.wh_box.pack_start(self.wh_label, expand=False, fill=False, padding=0)
+        self.wh_box.pack_start(self.wh_combo, expand=False, fill=False, padding=0)
+        self.wh_box.pack_start(self.refresh_button, expand=False, fill=False, padding=0)
+
+        # Group 3: Actions (save, random, options, exit)
+        self.actions_box = Gtk.Box(spacing=4)
+        self.actions_box.pack_start(self.save_button, expand=False, fill=False, padding=0)
+        self.actions_box.pack_start(self.random_button, expand=False, fill=False, padding=0)
+        self.actions_box.pack_start(self.options_button, expand=False, fill=False, padding=0)
+        self.actions_box.pack_start(self.exit_button, expand=False, fill=False, padding=0)
+
+        # Separators between groups
+        sep1 = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+        sep2 = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+
+        # Add all groups to the top container:
+        self.top_container = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.top_container.pack_start(self.files_box, False, False, 0)
+        self.top_container.pack_start(sep1, False, False, 8)
+        self.top_container.pack_start(self.wh_box, False, False, 0)
+        self.top_container.pack_start(sep2, False, False, 8)
+        self.top_container.pack_start(self.actions_box, False, False, 0)
         self.top_row_alignment.add(self.top_container)
 
         # MIDDLE GRID
@@ -704,25 +723,27 @@ class App(Gtk.Window):
         GLib.idle_add(self.load_image_grid)
 
 
-    def get_filtered_images(self) -> list:
-        """Filter image paths, names, and thumbnails based on the search query, if any"""
-        # Read what is written in the search bar, and if nothing, return all images:
+    def _get_filtered_indices(self) -> list:
+        """Return indices of items matching the current search query"""
         search_query = self.search_entry.get_text().lower()
         if not search_query:
-            return self.thumbnails, self.image_names, self.image_paths
-
-        # Otherwise, filter only images whos names match the search query:
-        image_names = [name for name in self.image_names if search_query in name.lower()]
-        thumbnails = [self.thumbnails[i] for i in range(len(self.image_names)) if search_query in self.image_names[i].lower()]
-        image_paths = [self.image_paths[i] for i in range(len(self.image_names)) if search_query in self.image_names[i].lower()]
-
-        return thumbnails, image_names, image_paths
+            return list(range(len(self.image_paths)))
+        return [i for i, name in enumerate(self.image_names) if search_query in name.lower()]
 
 
     def load_image_grid(self) -> None:
         """Reload the grid of images"""
 
-        thumbnails, image_names, image_paths = self.get_filtered_images()
+        self.filtered_indices = self._get_filtered_indices()
+        if not self.filtered_indices:
+            self.filtered_indices = [0]
+
+        if self.selected_index >= len(self.filtered_indices):
+            self.selected_index = max(0, len(self.filtered_indices) - 1)
+
+        thumbnails = [self.thumbnails[i] for i in self.filtered_indices]
+        image_names = [self.image_names[i] for i in self.filtered_indices]
+        image_paths = [self.image_paths[i] for i in self.filtered_indices]
 
         # Clear existing images:
         for child in self.grid.get_children():
@@ -730,6 +751,9 @@ class App(Gtk.Window):
 
         current_y = 0
         current_row_heights = [0] * self.cf.number_of_columns
+
+        prefs_cache = self._load_preferences()
+
         for index, [thumbnail, name, path] in enumerate(zip(thumbnails, image_names, image_paths)):
 
             row = index // self.cf.number_of_columns
@@ -754,7 +778,7 @@ class App(Gtk.Window):
                 button.set_relief(Gtk.ReliefStyle.NONE)
 
             # Add visual indicator for kept/discarded wallpapers
-            status = self._get_wallpaper_status(str(path))
+            status = self._get_wallpaper_status(str(path), prefs_cache)
             if status == "kept":
                 button.get_style_context().add_class("wallpaper-kept")
             elif status == "discarded":
@@ -770,22 +794,33 @@ class App(Gtk.Window):
         self.toggle_zen_mode()
 
 
-    def _get_wallpaper_status(self, path):
-        """Check if a wallpaper is kept or discarded from preferences"""
+    def _load_preferences(self):
+        """Load preferences.json once and return the parsed dict, or empty dict"""
         try:
             prefs_file = Path.home() / ".config" / "waypaper" / "preferences.json"
             if prefs_file.exists():
-                prefs = json.loads(prefs_file.read_text())
-                name = Path(path).stem
-                if name.startswith("wh-"):
-                    wid = name[3:]
-                else:
-                    import hashlib
-                    wid = "local_" + hashlib.md5(str(path).encode()).hexdigest()[:12]
-                if wid in prefs.get("kept", {}):
-                    return "kept"
-                if wid in prefs.get("discarded", {}):
-                    return "discarded"
+                return json.loads(prefs_file.read_text())
+        except Exception:
+            pass
+        return {}
+
+    def _get_wallpaper_status(self, path, prefs_cache=None):
+        """Check if a wallpaper is kept or discarded from preferences"""
+        if prefs_cache is None:
+            prefs_cache = self._load_preferences()
+        if not prefs_cache:
+            return None
+        try:
+            name = Path(path).stem
+            if name.startswith("wh-"):
+                wid = name[3:]
+            else:
+                import hashlib
+                wid = "local_" + hashlib.md5(str(path).encode()).hexdigest()[:12]
+            if wid in prefs_cache.get("kept", {}):
+                return "kept"
+            if wid in prefs_cache.get("discarded", {}):
+                return "discarded"
         except Exception:
             pass
         return None
@@ -976,22 +1011,39 @@ class App(Gtk.Window):
         self.cf.color = "#{:02X}{:02X}{:02X}".format(red, green, blue)
 
 
+    def _current_full_path(self):
+        """Return the full image path for the current selected_index (filtered view)"""
+        if not self.filtered_indices or self.selected_index >= len(self.filtered_indices):
+            return None
+        full_idx = self.filtered_indices[self.selected_index]
+        if full_idx >= len(self.image_paths):
+            return None
+        return self.image_paths[full_idx]
+
     def on_image_clicked(self, widget, path: str) -> None:
         """On clicking an image, set it as a wallpaper and save"""
-        self.selected_index = self.image_paths.index(path)
+        full_index = self.image_paths.index(path)
+        self.selected_index = self.filtered_indices.index(full_index) if full_index in self.filtered_indices else 0
         self.load_image_grid()
         self.set_selected_wallpaper(path)
 
     def _save_wallpaper(self, show_message=True) -> None:
         """Save selected wallpaper permanently. Keeps it in preferences so cleanup won't delete it."""
-        if self.selected_index >= len(self.image_paths):
+        wallpaper_path = self._current_full_path()
+        if not wallpaper_path:
             return
-        wallpaper_path = self.image_paths[self.selected_index]
-        subprocess.Popen([str(Path.home() / ".local/bin/wallpaper-brain"), "keep", str(wallpaper_path)],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        self.load_image_grid()
+        threading.Thread(target=self._run_save, args=(wallpaper_path, show_message), daemon=True).start()
+
+    def _run_save(self, path, show_message):
+        """Run wallpaper-brain keep in a thread for save, then reload grid"""
+        try:
+            subprocess.run([str(Path.home() / ".local/bin/wallpaper-brain"), "keep", str(path)],
+                           capture_output=True, timeout=30)
+        except Exception:
+            pass
+        GLib.idle_add(self.load_image_grid)
         if show_message:
-            self.show_message("♥ Saved to library")
+            GLib.idle_add(self.show_message, "♥ Saved to library")
 
     def on_save_clicked(self, widget) -> None:
         """Button handler: save selected wallpaper to library"""
@@ -1007,8 +1059,41 @@ class App(Gtk.Window):
             search_text = self.search_entry.get_text().strip()
             if search_text:
                 cmd.extend(["-q", search_text])
-            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        self.clear_cache()
+            threading.Thread(target=self._run_download, args=(cmd,), daemon=True).start()
+        else:
+            self.clear_cache()
+
+    def _run_download(self, cmd):
+        """Run wallhaven-download in a thread, then clear cache on success"""
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            if result.returncode != 0:
+                err = result.stderr.strip() or "unknown error"
+                GLib.idle_add(self.show_message, f"Download failed: {err}")
+                return
+            GLib.idle_add(self.clear_cache)
+        except subprocess.TimeoutExpired:
+            GLib.idle_add(self.show_message, "Download timed out (120s)")
+        except FileNotFoundError:
+            GLib.idle_add(self.show_message, f"wallhaven-download not found at {cmd[0]}")
+
+    def _run_keep(self, path):
+        """Run wallpaper-brain keep in a thread, then reload grid"""
+        try:
+            subprocess.run([str(Path.home() / ".local/bin/wallpaper-brain"), "keep", str(path)],
+                           capture_output=True, timeout=30)
+        except Exception:
+            pass
+        GLib.idle_add(self.load_image_grid)
+
+    def _run_discard(self, path):
+        """Run wallpaper-brain discard in a thread, then reload grid"""
+        try:
+            subprocess.run([str(Path.home() / ".local/bin/wallpaper-brain"), "discard", str(path)],
+                           capture_output=True, timeout=30)
+        except Exception:
+            pass
+        GLib.idle_add(self.load_image_grid)
 
     def on_hyprland_restart(self, widget) -> None:
         # As in the new Hyprpaper Update Unloading wallpapers is not possible anymore, Hyprpaper needs to be restarted to free up memory
@@ -1113,7 +1198,8 @@ class App(Gtk.Window):
             self.scroll_to_selected_image()
 
         elif event.keyval in self.keys.navigation_down:
-            self.selected_index = min(self.selected_index + self.cf.number_of_columns, len(self.image_paths) - 1)
+            max_idx = max(0, len(self.filtered_indices) - 1)
+            self.selected_index = min(self.selected_index + self.cf.number_of_columns, max_idx)
             self.load_image_grid()
             self.scroll_to_selected_image()
 
@@ -1123,7 +1209,8 @@ class App(Gtk.Window):
             self.scroll_to_selected_image()
 
         elif event.keyval in self.keys.navigation_right:
-            self.selected_index = min(self.selected_index + 1, len(self.image_paths) - 1)
+            max_idx = max(0, len(self.filtered_indices) - 1)
+            self.selected_index = min(self.selected_index + 1, max_idx)
             self.load_image_grid()
             self.scroll_to_selected_image()
 
@@ -1140,7 +1227,7 @@ class App(Gtk.Window):
             self.load_image_grid()
 
         elif event.keyval in self.keys.scroll_to_bottom:
-            self.selected_index = len(self.image_paths) - 1
+            self.selected_index = max(0, len(self.filtered_indices) - 1)
             self.load_image_grid()
             self.scroll_to_selected_image()
 
@@ -1149,20 +1236,19 @@ class App(Gtk.Window):
             self.show_message(message)
 
         elif event.keyval in self.keys.select_wallpaper:
-            wallpaper_path = self.image_paths[self.selected_index]
-            self.set_selected_wallpaper(wallpaper_path)
+            wallpaper_path = self._current_full_path()
+            if wallpaper_path:
+                self.set_selected_wallpaper(wallpaper_path)
 
         elif event.keyval in self.keys.keep_wallpaper:
-            wallpaper_path = self.image_paths[self.selected_index]
-            subprocess.Popen([str(Path.home() / ".local/bin/wallpaper-brain"), "keep", str(wallpaper_path)],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            self.load_image_grid()
+            wallpaper_path = self._current_full_path()
+            if wallpaper_path:
+                threading.Thread(target=self._run_keep, args=(wallpaper_path,), daemon=True).start()
 
         elif event.keyval in self.keys.discard_wallpaper:
-            wallpaper_path = self.image_paths[self.selected_index]
-            subprocess.Popen([str(Path.home() / ".local/bin/wallpaper-brain"), "discard", str(wallpaper_path)],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            self.load_image_grid()
+            wallpaper_path = self._current_full_path()
+            if wallpaper_path:
+                threading.Thread(target=self._run_discard, args=(wallpaper_path,), daemon=True).start()
 
         elif event.keyval in self.keys.save_wallpaper:
             self._save_wallpaper()
