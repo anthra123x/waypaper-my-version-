@@ -13,12 +13,11 @@ from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 block_cipher = None
 
-# ── Static files (dest, source, typecode) ─────────────────────────────
+# ── Static files (source, dest_dir) — asset format for Analysis ──────
 static_datas = []
 for f in Path("src/waypaper/static").rglob("*"):
     if f.is_file():
-        rel = str(f.relative_to(Path("src/waypaper").parent))
-        static_datas.append((rel, str(f), 'DATA'))
+        static_datas.append((str(f), 'waypaper/static'))
 
 # ── Analysis ──────────────────────────────────────────────────────────
 a = Analysis(
