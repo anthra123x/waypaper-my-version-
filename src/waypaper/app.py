@@ -267,6 +267,16 @@ class App(Gtk.Window):
         self.bottom_loading_box.set_margin_bottom(0)
         self.main_box.pack_end(self.bottom_loading_box, False, False, 0)
 
+        # Status bar for stats (always visible at bottom)
+        self.status_bar = Gtk.Box(spacing=4)
+        self.status_bar.set_margin_bottom(2)
+        self.status_bar.set_margin_top(2)
+        self.status_bar.set_halign(Gtk.Align.CENTER)
+        self.status_label = Gtk.Label(label="")
+        self.status_label.set_opacity(0.7)
+        self.status_bar.pack_start(self.status_label, False, False, 0)
+        self.main_box.pack_end(self.status_bar, False, False, 0)
+
         # Create alignment container for bottom menu:
         self.button_row_alignment = Gtk.Alignment(xalign=0.5, yalign=0.0, xscale=0.5, yscale=0.5)
         self.bottom_button_box.pack_start(self.button_row_alignment, True, False, 0)
@@ -822,7 +832,19 @@ class App(Gtk.Window):
 
         self.grid.show_all()
         self.toggle_zen_mode()
+        self._update_status_bar()
 
+
+    def _update_status_bar(self):
+        """Update the status bar with current stats from preferences"""
+        prefs = self._load_preferences()
+        kept = len(prefs.get("kept", {}))
+        discarded = len(prefs.get("discarded", {}))
+        total = len(self.image_paths)
+        tag_count = int(prefs.get("tag_count", 0))
+        top_tags = sorted(prefs.get("tag_weights", {}).items(), key=lambda x: -x[1])[:3]
+        tag_str = " | ".join(f"{t} ({w:.0f})" for t, w in top_tags) if top_tags else "—"
+        self.status_label.set_text(f"Total: {total}  |  ♥ {kept}  |  ✕ {discarded}  |  Tags learned: {tag_count}  |  Top: {tag_str}")
 
     def _load_preferences(self):
         """Load preferences.json once and return the parsed dict, or empty dict"""
