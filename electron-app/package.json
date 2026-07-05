@@ -1,0 +1,26 @@
+{
+  "name": "waypaper-online-version",
+  "version": "0.1.0",
+  "description": "Waypaper — Wallhaven wallpaper browser and manager",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "dev:linux": "xvfb-run -a electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "package": "electron-vite build && electron-builder --win",
+    "start": "electron out/main/index.js"
+  },
+  "devDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.7.0",
+    "electron": "34.0.2",
+    "electron-builder": "^25.1.0",
+    "electron-vite": "^5.0.0",
+    "typescript": "^5.7.0",
+    "vite": "^7.0.0"
+  }
+}

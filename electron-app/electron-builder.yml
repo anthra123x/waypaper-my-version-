@@ -1,0 +1,23 @@
+appId: com.waypaper.app
+productName: Waypaper
+directories:
+  output: dist
+  buildResources: resources
+files:
+  - out/**/*
+  - "!node_modules/**/*"
+win:
+  target:
+    - nsis
+  icon: resources/icon.png
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+linux:
+  target:
+    - AppImage
+  icon: resources/icon.png
+mac:
+  target:
+    - dmg
+  icon: resources/icon.png
