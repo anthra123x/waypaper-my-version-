@@ -1,9 +1,10 @@
-import { execFile } from 'child_process'
+import { execFile, exec } from 'child_process'
 import { promisify } from 'util'
 import { platform } from 'os'
 import { existsSync } from 'fs'
 
-const exec = promisify(execFile)
+const execP = promisify(execFile)
+const execRaw = promisify(exec)
 
 async function setWindows(path: string): Promise<boolean> {
   const psScript = `
@@ -17,7 +18,21 @@ public class Wallpaper {
 [Wallpaper]::SystemParametersInfo(0x0014, 0, '${path.replace(/'/g, "''")}', 0x01 -bor 0x02)
 `
   try {
-    await exec('powershell', ['-NoProfile', '-Command', psScript])
+    await execP('powershell', ['-NoProfile', '-Command', psScript])
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function ensureSwwwDaemon(): Promise<boolean> {
+  try {
+    await execRaw('pgrep swww-daemon')
+    return true
+  } catch {}
+  try {
+    await execRaw('swww-daemon')
+    await new Promise(r => setTimeout(r, 500))
     return true
   } catch {
     return false
@@ -25,12 +40,16 @@ public class Wallpaper {
 }
 
 async function setLinux(path: string): Promise<boolean> {
+  if (await ensureSwwwDaemon()) {
+    try {
+      await execP('swww', ['img', path, '--transition-step', '90', '--transition-duration', '2', '--transition-fps', '60'])
+      return true
+    } catch {}
+  }
   try {
-    await exec('swww', ['img', path])
-    return true
-  } catch {}
-  try {
-    await exec('swaybg', ['-i', path])
+    const { spawn } = await import('child_process')
+    const bg = spawn('swaybg', ['-i', path, '-m', 'fill'], { detached: true, stdio: 'ignore' })
+    bg.unref()
     return true
   } catch {}
   return false
@@ -45,5 +64,5 @@ export async function setWallpaper(path: string): Promise<boolean> {
 }
 
 export const SUPPORTED_EXTENSIONS = new Set([
-  '.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff',
+  '.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.webp',
 ])

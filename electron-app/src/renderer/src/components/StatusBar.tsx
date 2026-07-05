@@ -1,7 +1,9 @@
+import type { BrainStats } from '../types'
+
 interface StatusBarProps {
   text: string
   count: string
-  stats: { kept_count: number; discarded_count: number } | null
+  stats: BrainStats | null
 }
 
 export default function StatusBar({ text, count, stats }: StatusBarProps) {
@@ -11,14 +13,16 @@ export default function StatusBar({ text, count, stats }: StatusBarProps) {
   return (
     <div id="status-bar">
       <span id="status-text">{text}</span>
-      <span style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+      <div className="status-right">
         {stats !== null && (
-          <span style={{ fontSize: 11 }}>
-            Kept: {kept} / Discarded: {discarded}
+          <span className="brain-stats">
+            <span className="stat-kept">{kept} kept</span>
+            <span className="stat-sep">/</span>
+            <span className="stat-discarded">{discarded} discarded</span>
           </span>
         )}
         <span id="status-count">{count}</span>
-      </span>
+      </div>
     </div>
   )
 }

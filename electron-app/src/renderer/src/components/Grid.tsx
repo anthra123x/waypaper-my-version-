@@ -8,27 +8,40 @@ interface GridProps {
   onItemClick: (item: WallpaperItem) => void
 }
 
-interface GridItemProps {
+interface GridItemImageProps {
   item: WallpaperItem
-  onClick: () => void
 }
 
-function GridItemImage({ item }: { item: WallpaperItem }) {
-  const [src, setSrc] = useState<string>('')
+function GridItemImage({ item }: GridItemImageProps) {
+  const [src, setSrc] = useState('')
+  const [failed, setFailed] = useState(false)
 
   useEffect(() => {
     if (item.thumb_url) {
       setSrc(item.thumb_url)
     } else if (item.path) {
-      api.readFileAsBase64(item.path).then(setSrc).catch(() => setSrc(''))
+      api.readFileAsBase64(item.path).then(setSrc).catch(() => setFailed(true))
+    } else {
+      setFailed(true)
     }
   }, [item.thumb_url, item.path])
 
-  if (!src) return null
-  return <img src={src} alt={item.id} loading="lazy" />
+  if (!src || failed) {
+    return <div className="grid-placeholder">No preview</div>
+  }
+
+  return <img src={src} alt={item.id} loading="lazy" onError={() => setFailed(true)} />
 }
 
-const Grid = forwardRef<HTMLDivElement, GridProps>(({ items, onItemClick }, ref) => {
+const Grid = forwardRef<HTMLDivElement, GridProps>(({ items, mode, onItemClick }, ref) => {
+  if (items.length === 0) {
+    return (
+      <div id="grid" ref={ref}>
+        <div className="grid-empty">No wallpapers found</div>
+      </div>
+    )
+  }
+
   return (
     <div id="grid" ref={ref}>
       {items.map((item) => (
@@ -40,9 +53,17 @@ const Grid = forwardRef<HTMLDivElement, GridProps>(({ items, onItemClick }, ref)
           onKeyDown={(e) => { if (e.key === 'Enter') onItemClick(item) }}
         >
           <GridItemImage item={item} />
-          <div className="item-label">
-            {item.resolution || item.name || item.id}
+          <div className="item-overlay">
+            <span className="item-resolution">{item.resolution || item.name || item.id}</span>
+            <span className="item-purity-badge" data-purity={item.purity}>{item.purity}</span>
           </div>
+          {mode === 'search' && item.tags && item.tags.length > 0 && (
+            <div className="item-tags">
+              {item.tags.slice(0, 3).map(t => (
+                <span key={t.name} className="item-tag">{t.name}</span>
+              ))}
+            </div>
+          )}
         </div>
       ))}
     </div>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import type { WallpaperItem, BrainStats } from './types'
+import type { WallpaperItem, BrainStats, SearchFilters } from './types'
 import * as api from './api'
 import Toolbar from './components/Toolbar'
 import StatusBar from './components/StatusBar'
@@ -7,53 +7,55 @@ import Grid from './components/Grid'
 import Pagination from './components/Pagination'
 import PreviewModal from './components/PreviewModal'
 
+const DEFAULT_FILTERS: SearchFilters = {
+  categories: '111',
+  purity: '100',
+  sorting: 'toplist',
+  page: 1,
+  atleast: '1920x1080',
+}
+
 export default function App() {
   const [mode, setMode] = useState<'search' | 'library'>('search')
+  const [filters, setFilters] = useState<SearchFilters>(DEFAULT_FILTERS)
+  const [items, setItems] = useState<WallpaperItem[]>([])
   const [page, setPage] = useState(1)
   const [lastPage, setLastPage] = useState(1)
-  const [query, setQuery] = useState('')
-  const [preset, setPreset] = useState('random')
-  const [items, setItems] = useState<WallpaperItem[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [previewItem, setPreviewItem] = useState<WallpaperItem | null>(null)
-  const [previewPath, setPreviewPath] = useState<string | null>(null)
+  const [previewLocalPath, setPreviewLocalPath] = useState<string | null>(null)
   const [stats, setStats] = useState<BrainStats | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
   const gridRef = useRef<HTMLDivElement>(null)
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout>>()
 
   const fetchStats = useCallback(async () => {
-    try {
-      setStats(await api.brainStats())
-    } catch {}
+    try { setStats(await api.brainStats()) } catch {}
   }, [])
 
   const checkStatuses = useCallback(async (newItems: WallpaperItem[]) => {
-    const updated = await Promise.all(
-      newItems.map(async (item) => {
-        if (!item.id) return item
-        try {
-          const status = await api.brainStatus(item.id)
-          return { ...item, status }
-        } catch {
-          return item
-        }
-      })
-    )
-    setItems(updated)
+    const ids = newItems.map(i => i.id).filter(Boolean)
+    if (ids.length === 0) return newItems
+    try {
+      const statuses = await api.brainStatuses(ids)
+      return newItems.map(item => ({ ...item, status: statuses[item.id] || null }))
+    } catch {
+      return newItems.map(item => ({ ...item, status: null }))
+    }
   }, [])
 
-  const doSearch = useCallback(async (p: string, q: string, pg: number) => {
+  const doSearch = useCallback(async (f: SearchFilters) => {
     setLoading(true)
     setError('')
     try {
-      const data = await api.searchWallhaven(p, q, pg)
-      const newItems = data.items.map(i => ({ ...i, status: null }))
-      setItems(newItems)
+      const data = await api.searchWallhaven(f)
+      const withStatus = await checkStatuses(data.items)
+      setItems(withStatus)
       setPage(data.page)
       setLastPage(data.lastPage)
-      await checkStatuses(newItems)
     } catch (err: any) {
-      setError(err.message || 'Search failed')
+      setError(err?.message || 'Search failed')
       setItems([])
     }
     setLoading(false)
@@ -70,11 +72,17 @@ export default function App() {
         full_url: '',
         resolution: '',
         tags: [],
+        purity: '',
+        category: '',
+        file_size: 0,
+        upload_date: '',
+        likes: 0,
+        views: 0,
       })))
       setPage(1)
       setLastPage(1)
     } catch (err: any) {
-      setError(err.message || 'Failed to load library')
+      setError(err?.message || 'Failed to load library')
       setItems([])
     }
     setLoading(false)
@@ -82,7 +90,7 @@ export default function App() {
 
   useEffect(() => {
     if (mode === 'search') {
-      doSearch(preset, query, 1)
+      doSearch({ ...filters, page: 1 })
     } else {
       loadLibrary()
     }
@@ -94,28 +102,36 @@ export default function App() {
 
   const handleModeChange = (newMode: 'search' | 'library') => {
     setPreviewItem(null)
-    setPreviewPath(null)
+    setPreviewLocalPath(null)
     setMode(newMode)
   }
 
-  const handleSearch = (newQuery: string) => {
-    setQuery(newQuery)
-    doSearch(preset, newQuery, 1)
+  const handleFiltersChange = (newFilters: Partial<SearchFilters>) => {
+    const merged = { ...filters, ...newFilters, page: 1 }
+    setFilters(merged)
+    doSearch(merged)
   }
 
-  const handlePresetChange = (newPreset: string) => {
-    setPreset(newPreset)
-    doSearch(newPreset, query, 1)
+  const handleSearchInput = (query: string) => {
+    setSearchQuery(query)
+    clearTimeout(searchTimerRef.current)
+    searchTimerRef.current = setTimeout(() => {
+      const merged = { ...filters, query, page: 1 }
+      setFilters(merged)
+      doSearch(merged)
+    }, 350)
   }
 
   const handlePageChange = (newPage: number) => {
     if (newPage < 1 || newPage > lastPage || loading) return
-    doSearch(preset, query, newPage)
+    const merged = { ...filters, page: newPage }
+    setFilters(merged)
+    doSearch(merged)
   }
 
   const handleRefresh = () => {
     if (mode === 'search') {
-      doSearch(preset, query, 1)
+      doSearch({ ...filters, page: 1 })
     } else {
       loadLibrary()
     }
@@ -123,48 +139,51 @@ export default function App() {
 
   const handleItemClick = async (item: WallpaperItem) => {
     setPreviewItem(item)
-    setPreviewPath(null)
+    setPreviewLocalPath(null)
     if (mode === 'search' && item.full_url) {
       try {
         const localPath = await api.previewWallpaper(item.id, item.full_url)
-        setPreviewPath(localPath)
+        setPreviewLocalPath(localPath)
       } catch {}
     }
+  }
+
+  const handleTagClick = (tag: string) => {
+    setSearchQuery(tag)
+    const merged = { ...filters, query: tag, page: 1 }
+    setFilters(merged)
+    doSearch(merged)
   }
 
   const handleSet = async () => {
     if (!previewItem) return
     try {
       await api.setWallpaper(previewItem.id, previewItem.full_url)
-      await fetchStats()
+      fetchStats()
       setPreviewItem(null)
-      setPreviewPath(null)
-    } catch (err: any) {
-      setError(err.message || 'Failed to set wallpaper')
-    }
+      setPreviewLocalPath(null)
+    } catch {}
   }
 
   const handleSave = async () => {
     if (!previewItem) return
     try {
       await api.saveToLibrary(previewItem.id, previewItem.full_url)
-      await fetchStats()
+      fetchStats()
       setPreviewItem(null)
-      setPreviewPath(null)
-    } catch (err: any) {
-      setError(err.message || 'Failed to save')
-    }
+      setPreviewLocalPath(null)
+    } catch {}
   }
 
   const handleDiscard = async () => {
     if (!previewItem) return
     try {
       await api.discardWallpaper(previewItem.id, previewItem.path)
-      await fetchStats()
+      fetchStats()
       setPreviewItem(null)
-      setPreviewPath(null)
+      setPreviewLocalPath(null)
       if (mode === 'library') loadLibrary()
-      else doSearch(preset, query, page)
+      else doSearch(filters)
     } catch {}
   }
 
@@ -173,16 +192,16 @@ export default function App() {
     if (!confirm(`Delete ${previewItem.name || previewItem.id} from library?`)) return
     try {
       await api.deleteLibrary(previewItem.id)
-      await fetchStats()
+      fetchStats()
       setPreviewItem(null)
-      setPreviewPath(null)
+      setPreviewLocalPath(null)
       loadLibrary()
     } catch {}
   }
 
   const handleClosePreview = () => {
     setPreviewItem(null)
-    setPreviewPath(null)
+    setPreviewLocalPath(null)
   }
 
   useEffect(() => {
@@ -190,17 +209,11 @@ export default function App() {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return
 
       if (previewItem) {
-        if (e.key === 'Escape' || e.key === 'k' || e.key === 'K') {
-          handleClosePreview()
-        } else if (e.key === 'Enter' && mode === 'search') {
-          handleSet()
-        } else if (e.key === 'd' || e.key === 'D') {
-          handleDiscard()
-        } else if (e.key === 's' || e.key === 'S') {
-          handleSave()
-        } else if (e.key === 'y' || e.key === 'Y') {
-          handleDelete()
-        }
+        if (e.key === 'Escape' || e.key === 'k' || e.key === 'K') handleClosePreview()
+        else if (e.key === 'Enter' && mode === 'search') handleSet()
+        else if (e.key === 'd' || e.key === 'D') handleDiscard()
+        else if (e.key === 's' || e.key === 'S') handleSave()
+        else if (e.key === 'y' || e.key === 'Y') handleDelete()
       } else {
         if (e.key === '1') handleModeChange('search')
         else if (e.key === '2') handleModeChange('library')
@@ -221,48 +234,55 @@ export default function App() {
           const prev = els[Math.max(idx - 1, 0)] as HTMLElement
           prev?.focus()
           prev?.scrollIntoView({ block: 'nearest' })
-        } else if (e.key === 'ArrowLeft') {
-          handlePageChange(page - 1)
-        } else if (e.key === 'ArrowRight') {
-          handlePageChange(page + 1)
-        }
+        } else if (e.key === 'ArrowLeft') handlePageChange(page - 1)
+        else if (e.key === 'ArrowRight') handlePageChange(page + 1)
       }
     }
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [previewItem, mode, page, lastPage, loading])
+  }, [previewItem, mode, page, lastPage, loading, filters])
 
-  const statusText = loading ? 'Loading…' : error || (mode === 'search' ? `Wallhaven ${preset}` : 'Library')
+  const statusText = loading ? 'Loading…' : error || (mode === 'search' ? `Wallhaven` : 'Library')
 
   return (
     <div id="app">
-      <StatusBar text={statusText} count={`${items.length} items`} stats={stats} />
-      <Toolbar
-        mode={mode}
-        query={query}
-        preset={preset}
-        onModeChange={handleModeChange}
-        onSearch={handleSearch}
-        onPresetChange={handlePresetChange}
+      <StatusBar
+        text={statusText}
+        count={`${items.length} items`}
+        stats={stats}
       />
-      <Grid
-        ref={gridRef}
-        items={items}
-        mode={mode}
-        onItemClick={handleItemClick}
-      />
-      <Pagination page={page} lastPage={lastPage} onPageChange={handlePageChange} />
+      {mode === 'search' && (
+        <Toolbar
+          filters={filters}
+          query={searchQuery}
+          onFiltersChange={handleFiltersChange}
+          onSearchInput={handleSearchInput}
+          onModeChange={handleModeChange}
+        />
+      )}
+      {mode === 'library' && (
+        <Toolbar
+          filters={null}
+          query=""
+          onFiltersChange={() => {}}
+          onSearchInput={() => {}}
+          onModeChange={handleModeChange}
+        />
+      )}
+      <Grid ref={gridRef} items={items} mode={mode} onItemClick={handleItemClick} />
+      {mode === 'search' && <Pagination page={page} lastPage={lastPage} onPageChange={handlePageChange} />}
       {previewItem && (
         <PreviewModal
           item={previewItem}
           mode={mode}
-          localPath={previewPath}
+          localPath={previewLocalPath}
           onSet={handleSet}
           onSave={handleSave}
           onDiscard={handleDiscard}
           onDelete={handleDelete}
           onClose={handleClosePreview}
+          onTagClick={handleTagClick}
         />
       )}
     </div>

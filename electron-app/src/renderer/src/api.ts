@@ -1,13 +1,11 @@
-import type { WallpaperItem, BrainStats } from './types'
+import type { WallpaperItem, BrainStats, SearchFilters } from './types'
 
 const api = window.api
 
-export async function searchWallhaven(
-  preset: string,
-  query: string,
-  page: number
-): Promise<{ items: WallpaperItem[]; page: number; lastPage: number; total: number }> {
-  return api.searchWallhaven({ preset, query, page })
+export async function searchWallhaven(filters: SearchFilters): Promise<{
+  items: WallpaperItem[]; page: number; lastPage: number; total: number
+}> {
+  return api.searchWallhaven(filters)
 }
 
 export async function fetchImage(url: string): Promise<string> {
@@ -38,9 +36,9 @@ export async function brainStats(): Promise<BrainStats> {
   return api.brainStats()
 }
 
-export async function brainStatus(id: string): Promise<'kept' | 'discarded' | null> {
-  const result = await api.brainStatus(id)
-  return result.status
+export async function brainStatuses(ids: string[]): Promise<Record<string, 'kept' | 'discarded' | null>> {
+  const result = await api.brainStatuses(ids)
+  return result.statuses
 }
 
 export async function deleteLibrary(id: string): Promise<void> {

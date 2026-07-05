@@ -11,30 +11,31 @@ interface PreviewModalProps {
   onDiscard: () => void
   onDelete: () => void
   onClose: () => void
+  onTagClick: (tag: string) => void
 }
 
 export default function PreviewModal({
-  item, mode, localPath, onSet, onSave, onDiscard, onDelete, onClose,
+  item, mode, localPath, onSet, onSave, onDiscard, onDelete, onClose, onTagClick,
 }: PreviewModalProps) {
-  const [imageSrc, setImageSrc] = useState<string>('')
+  const [imageSrc, setImageSrc] = useState('')
   const [loadingImg, setLoadingImg] = useState(true)
 
   useEffect(() => {
     setLoadingImg(true)
-    if (mode === 'library' && item.path) {
-      api.readFileAsBase64(item.path)
-        .then(setImageSrc)
-        .catch(() => setImageSrc(''))
-        .finally(() => setLoadingImg(false))
-    } else if (item.full_url) {
-      api.fetchImage(item.full_url)
-        .then(setImageSrc)
-        .catch(() => setImageSrc(''))
-        .finally(() => setLoadingImg(false))
-    } else {
+    const load = async () => {
+      try {
+        if (item.path) {
+          setImageSrc(await api.readFileAsBase64(item.path))
+        } else if (item.full_url) {
+          setImageSrc(await api.fetchImage(item.full_url))
+        }
+      } catch {
+        setImageSrc('')
+      }
       setLoadingImg(false)
     }
-  }, [item, mode])
+    load()
+  }, [item, localPath])
 
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
@@ -43,6 +44,12 @@ export default function PreviewModal({
     document.addEventListener('keydown', handleEsc)
     return () => document.removeEventListener('keydown', handleEsc)
   }, [onClose])
+
+  const formatBytes = (bytes: number) => {
+    if (!bytes) return ''
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  }
 
   return (
     <div id="preview-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose() }}>
@@ -56,13 +63,66 @@ export default function PreviewModal({
             <div id="preview-loader" style={{ color: '#e03131' }}>Failed to load image</div>
           )}
         </div>
-        <div id="preview-info">
-          <span id="preview-id">{item.id}</span>
-          {item.resolution && <span>{item.resolution}</span>}
+
+        <div id="preview-sidebar">
+          <div className="preview-meta">
+            <div className="preview-meta-row">
+              <span className="preview-label">ID</span>
+              <span className="preview-value">{item.id}</span>
+            </div>
+            {item.resolution && (
+              <div className="preview-meta-row">
+                <span className="preview-label">Resolution</span>
+                <span className="preview-value">{item.resolution}</span>
+              </div>
+            )}
+            {item.file_size > 0 && (
+              <div className="preview-meta-row">
+                <span className="preview-label">Size</span>
+                <span className="preview-value">{formatBytes(item.file_size)}</span>
+              </div>
+            )}
+            <div className="preview-meta-row">
+              <span className="preview-label">Purity</span>
+              <span className={`preview-value purity-badge-${item.purity}`}>{item.purity}</span>
+            </div>
+            <div className="preview-meta-row">
+              <span className="preview-label">Category</span>
+              <span className="preview-value">{item.category}</span>
+            </div>
+            {item.views > 0 && (
+              <div className="preview-meta-row">
+                <span className="preview-label">Views</span>
+                <span className="preview-value">{item.views.toLocaleString()}</span>
+              </div>
+            )}
+            {item.likes > 0 && (
+              <div className="preview-meta-row">
+                <span className="preview-label">Favorites</span>
+                <span className="preview-value">{item.likes.toLocaleString()}</span>
+              </div>
+            )}
+          </div>
+
           {item.tags && item.tags.length > 0 && (
-            <span id="preview-tags">Tags: {item.tags.slice(0, 8).join(', ')}</span>
+            <div className="preview-tags-section">
+              <div className="preview-label">Tags</div>
+              <div className="preview-tags-list">
+                {item.tags.map(t => (
+                  <button
+                    key={t.name}
+                    className={`preview-tag ${t.is_nsfw ? 'nsfw' : ''}`}
+                    onClick={() => { onTagClick(t.name); onClose() }}
+                    title={t.is_nsfw ? 'NSFW tag' : `Search for "${t.name}"`}
+                  >
+                    {t.name}
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
         </div>
+
         <div id="preview-actions">
           {mode === 'search' && (
             <>

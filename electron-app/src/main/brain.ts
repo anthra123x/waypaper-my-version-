@@ -1,12 +1,23 @@
 import { readFile, writeFile, mkdir } from 'fs/promises'
 import { existsSync } from 'fs'
 import { createHash } from 'crypto'
-import { basename } from 'path'
+import { basename, dirname } from 'path'
 
 const UA = 'waypaper-brain/1.0'
 const API = 'https://wallhaven.cc/api/v1'
 
-interface Prefs {
+export interface KeptEntry {
+  path: string
+  tags: string[]
+  time: string
+}
+
+export interface DiscardedEntry {
+  path: string
+  time: string
+}
+
+export interface Prefs {
   kept: Record<string, KeptEntry>
   discarded: Record<string, DiscardedEntry>
   tag_weights: Record<string, number>
@@ -15,19 +26,24 @@ interface Prefs {
   last_recommend: string
 }
 
-interface KeptEntry {
-  path: string
-  tags: string[]
-  time: string
-}
-
-interface DiscardedEntry {
-  path: string
-  time: string
+export interface BrainStats {
+  total_on_disk: number
+  kept_count: number
+  discarded_count: number
+  tag_count: number
+  top_tags: { tag: string; weight: number }[]
 }
 
 let prefsPath = ''
 let libraryDirPath = ''
+
+let writeLock: Promise<void> = Promise.resolve()
+
+function withLock<T>(fn: () => Promise<T>): Promise<T> {
+  const next = writeLock.then(fn, fn)
+  writeLock = next.then(() => {}, () => {})
+  return next
+}
 
 export function initPaths(prefs: string, lib: string) {
   prefsPath = prefs
@@ -59,7 +75,10 @@ export async function loadPrefs(): Promise<Prefs> {
 }
 
 export async function savePrefs(prefs: Prefs): Promise<void> {
-  await mkdir(prefsPath.substring(0, prefsPath.lastIndexOf('/')), { recursive: true })
+  const dir = dirname(prefsPath)
+  if (!existsSync(dir)) {
+    await mkdir(dir, { recursive: true })
+  }
   await writeFile(prefsPath, JSON.stringify(prefs, null, 2), 'utf-8')
 }
 
@@ -84,21 +103,11 @@ async function fetchTags(wid: string): Promise<string[]> {
   }
 }
 
-export interface BrainStats {
-  total_on_disk: number
-  kept_count: number
-  discarded_count: number
-  tag_count: number
-  top_tags: { tag: string; weight: number }[]
-  last_cleanup: string
-  last_recommend: string
-}
-
 export async function getStats(): Promise<BrainStats> {
   const prefs = await loadPrefs()
-  const { readdir } = await import('fs/promises')
   let totalOnDisk = 0
   try {
+    const { readdir } = await import('fs/promises')
     const files = await readdir(libraryDirPath)
     totalOnDisk = files.length
   } catch {}
@@ -112,58 +121,62 @@ export async function getStats(): Promise<BrainStats> {
     discarded_count: Object.keys(prefs.discarded).length,
     tag_count: prefs.tag_count,
     top_tags: topTags,
-    last_cleanup: prefs.last_cleanup,
-    last_recommend: prefs.last_recommend,
   }
 }
 
 export async function keep(path: string): Promise<Prefs> {
-  const wid = widFrom(path)
-  const prefs = await loadPrefs()
-  if (prefs.kept[wid]) return prefs
+  return withLock(async () => {
+    const wid = widFrom(path)
+    const prefs = await loadPrefs()
+    if (prefs.kept[wid]) return prefs
 
-  const isLocal = wid.startsWith('local_')
-  const tags = isLocal ? [] : await fetchTags(wid)
+    const isLocal = wid.startsWith('local_')
+    const tags = isLocal ? [] : await fetchTags(wid)
 
-  prefs.kept[wid] = { path, tags, time: now() }
-  if (!isLocal) {
-    for (const t of tags) {
-      prefs.tag_weights[t] = (prefs.tag_weights[t] || 0) + 1
+    prefs.kept[wid] = { path, tags, time: now() }
+    if (!isLocal) {
+      for (const t of tags) {
+        prefs.tag_weights[t] = (prefs.tag_weights[t] || 0) + 1
+      }
+      prefs.tag_count = Object.values(prefs.tag_weights).reduce((a, b) => a + b, 0)
     }
-    prefs.tag_count = Object.values(prefs.tag_weights).reduce((a, b) => a + b, 0)
-  }
-  delete prefs.discarded[wid]
-  await savePrefs(prefs)
-  return prefs
+    delete prefs.discarded[wid]
+    await savePrefs(prefs)
+    return prefs
+  })
 }
 
 export async function discard(path: string): Promise<Prefs> {
-  const wid = widFrom(path)
-  if (!wid) return loadPrefs()
-  const prefs = await loadPrefs()
+  return withLock(async () => {
+    const wid = widFrom(path)
+    if (!wid) return loadPrefs()
+    const prefs = await loadPrefs()
 
-  prefs.discarded[wid] = { path, time: now() }
-  if (prefs.kept[wid]) {
-    for (const t of prefs.kept[wid].tags || []) {
-      prefs.tag_weights[t] = (prefs.tag_weights[t] || 1) - 0.5
-      if (prefs.tag_weights[t] <= 0) {
-        delete prefs.tag_weights[t]
+    prefs.discarded[wid] = { path, time: now() }
+    if (prefs.kept[wid]) {
+      for (const t of prefs.kept[wid].tags || []) {
+        prefs.tag_weights[t] = (prefs.tag_weights[t] || 1) - 0.5
+        if (prefs.tag_weights[t] <= 0) {
+          delete prefs.tag_weights[t]
+        }
       }
+      delete prefs.kept[wid]
     }
-    delete prefs.kept[wid]
-  }
-  await savePrefs(prefs)
-  return prefs
+    await savePrefs(prefs)
+    return prefs
+  })
 }
 
 export async function forget(path: string): Promise<Prefs> {
-  const wid = widFrom(path)
-  if (!wid) return loadPrefs()
-  const prefs = await loadPrefs()
-  delete prefs.kept[wid]
-  delete prefs.discarded[wid]
-  await savePrefs(prefs)
-  return prefs
+  return withLock(async () => {
+    const wid = widFrom(path)
+    if (!wid) return loadPrefs()
+    const prefs = await loadPrefs()
+    delete prefs.kept[wid]
+    delete prefs.discarded[wid]
+    await savePrefs(prefs)
+    return prefs
+  })
 }
 
 export async function getStatus(wid: string): Promise<'kept' | 'discarded' | null> {
@@ -173,6 +186,13 @@ export async function getStatus(wid: string): Promise<'kept' | 'discarded' | nul
   return null
 }
 
-export async function getStatusForPath(path: string): Promise<'kept' | 'discarded' | null> {
-  return getStatus(widFrom(path))
+export async function getStatuses(wids: string[]): Promise<Record<string, 'kept' | 'discarded' | null>> {
+  const prefs = await loadPrefs()
+  const result: Record<string, 'kept' | 'discarded' | null> = {}
+  for (const wid of wids) {
+    if (prefs.kept[wid]) result[wid] = 'kept'
+    else if (prefs.discarded[wid]) result[wid] = 'discarded'
+    else result[wid] = null
+  }
+  return result
 }
