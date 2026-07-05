@@ -10,9 +10,8 @@ import PreviewModal from './components/PreviewModal'
 const DEFAULT_FILTERS: SearchFilters = {
   categories: '111',
   purity: '100',
-  sorting: 'toplist',
+  sorting: 'random',
   page: 1,
-  atleast: '1920x1080',
 }
 
 export default function App() {
@@ -108,6 +107,8 @@ export default function App() {
 
   const handleFiltersChange = (newFilters: Partial<SearchFilters>) => {
     const merged = { ...filters, ...newFilters, page: 1 }
+    if (merged.categories === '000') merged.categories = '111'
+    if (merged.purity === '000') merged.purity = '100'
     setFilters(merged)
     doSearch(merged)
   }
