@@ -342,6 +342,7 @@ html, body {
   align-items: center;
   justify-content: center;
   z-index: 100;
+  animation: fadeIn 0.15s ease-out;
 }
 
 #preview-modal {
@@ -353,7 +354,7 @@ html, body {
   display: flex;
   flex-direction: row;
   overflow: hidden;
-  gap: 0;
+  animation: scaleIn 0.2s ease-out;
 }
 
 #preview-image-container {
@@ -380,21 +381,42 @@ html, body {
   position: absolute;
   inset: 0;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 12px;
   background: rgba(0,0,0,0.5);
   color: var(--text-bright);
-  font-size: 15px;
+  font-size: 14px;
 }
 
-#preview-sidebar {
-  width: 260px;
-  flex-shrink: 0;
+.spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+#preview-right-col {
   display: flex;
   flex-direction: column;
   border-left: 1px solid var(--border);
+  width: 260px;
+  flex-shrink: 0;
+}
+
+#preview-sidebar {
+  flex: 1;
   overflow-y: auto;
-  padding: 14px;
+  padding: 14px 14px 8px;
+  display: flex;
+  flex-direction: column;
   gap: 14px;
 }
 
@@ -440,7 +462,7 @@ html, body {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  max-height: 200px;
+  max-height: 140px;
   overflow-y: auto;
 }
 
@@ -470,17 +492,19 @@ html, body {
 #preview-actions {
   display: flex;
   gap: 6px;
-  padding: 6px 14px 12px;
+  padding: 8px 14px 12px;
   flex-wrap: wrap;
+  border-top: 1px solid var(--border);
 }
 
 #preview-actions button {
-  padding: 5px 14px;
+  padding: 6px 14px;
   border-radius: var(--radius);
   border: 1px solid transparent;
   cursor: pointer;
   font-size: 12px;
-  transition: background 0.12s;
+  font-weight: 500;
+  transition: all 0.12s;
 }
 
 .btn-primary {
@@ -510,3 +534,13 @@ html, body {
   border-color: transparent;
 }
 .btn-cancel:hover { background: var(--bg-hover); color: var(--text); }
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.92); }
+  to { opacity: 1; transform: scale(1); }
+}
