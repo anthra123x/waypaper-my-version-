@@ -6,6 +6,7 @@ import { PREFS_PATH, LIBRARY_DIR } from './paths'
 
 app.disableHardwareAcceleration()
 app.commandLine.appendSwitch('in-process-gpu')
+app.commandLine.appendSwitch('ozone-platform-hint', 'auto')
 
 let mainWindow: BrowserWindow | null = null
 
@@ -17,13 +18,19 @@ function createWindow(): void {
     minHeight: 600,
     title: 'Waypaper',
     backgroundColor: '#1a1b1e',
-    show: true,
+    show: false,
+    center: true,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
       contextIsolation: true,
       nodeIntegration: false,
     },
+  })
+
+  mainWindow.once('ready-to-show', () => {
+    mainWindow?.show()
+    mainWindow?.focus()
   })
 
   mainWindow.on('closed', () => {

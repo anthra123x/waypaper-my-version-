@@ -5,7 +5,8 @@
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
-    "dev:linux": "xvfb-run -a electron-vite dev",
+    "dev:linux": "electron-vite dev --noSandbox",
+    "dev:xvfb": "xvfb-run -a electron-vite dev --noSandbox",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "package": "electron-vite build && electron-builder --win",
