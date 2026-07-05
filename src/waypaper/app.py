@@ -12,7 +12,8 @@ from waypaper.changer import change_wallpaper
 from waypaper.config import Config
 from waypaper import wallhaven
 from waypaper.options import FILL_OPTIONS, SORT_OPTIONS, SORT_DISPLAYS, VIDEO_EXTENSIONS, SWWW_TRANSITION_TYPES, \
-    get_monitor_options, LINUX_WALLPAPERENGINE_FILL_OPTIONS, LINUX_WALLPAPERENGINE_CLAMP
+    get_monitor_options, LINUX_WALLPAPERENGINE_FILL_OPTIONS, LINUX_WALLPAPERENGINE_CLAMP, \
+    WH_SORT_OPTIONS, WH_SORT_DISPLAYS, WH_TOP_RANGES, WH_TOP_RANGE_DISPLAYS, WH_MIN_RESOLUTIONS
 from waypaper.translations import Chinese, English, French, German, Polish, Russian, Belarusian, Spanish
 from waypaper.keybindings import Keys
 
@@ -136,13 +137,58 @@ class App(Gtk.Window):
         # Wallhaven category selector:
         self.wh_label = Gtk.Label(label="Wallhaven:")
         self.wh_label.get_style_context().add_class("wh-label")
-        self.wh_combo = Gtk.ComboBoxText()
-        self.wh_presets = ["random", "anime", "manga", "sketch", "general"]
-        self.wh_labels = ["Random", "Anime", "Manga", "Sketch", "General"]
-        for label in self.wh_labels:
-            self.wh_combo.append_text(label)
-        self.wh_combo.set_active(0)
-        self.wh_combo.set_tooltip_text("Wallhaven category to download on refresh")
+        # Category toggle chips
+        self.wh_cat_general = Gtk.ToggleButton(label="General")
+        self.wh_cat_general.set_active(True)
+        self.wh_cat_general.connect("toggled", self.on_wh_cat_toggled)
+        self.wh_cat_anime = Gtk.ToggleButton(label="Anime")
+        self.wh_cat_anime.set_active(True)
+        self.wh_cat_anime.connect("toggled", self.on_wh_cat_toggled)
+        self.wh_cat_people = Gtk.ToggleButton(label="People")
+        self.wh_cat_people.set_active(True)
+        self.wh_cat_people.connect("toggled", self.on_wh_cat_toggled)
+
+        # Purity toggle chips
+        self.wh_pur_sfw = Gtk.ToggleButton(label="SFW")
+        self.wh_pur_sfw.set_active(True)
+        self.wh_pur_sfw.connect("toggled", self.on_wh_purity_toggled)
+        self.wh_pur_sketchy = Gtk.ToggleButton(label="Sketchy")
+        self.wh_pur_sketchy.set_active(False)
+        self.wh_pur_sketchy.connect("toggled", self.on_wh_purity_toggled)
+        self.wh_pur_nsfw = Gtk.ToggleButton(label="NSFW")
+        self.wh_pur_nsfw.set_active(False)
+        self.wh_pur_nsfw.connect("toggled", self.on_wh_purity_toggled)
+
+        # Wallhaven sort combo
+        self.wh_sort_combo = Gtk.ComboBoxText()
+        for opt in WH_SORT_OPTIONS:
+            self.wh_sort_combo.append_text(WH_SORT_DISPLAYS[opt])
+        self.wh_sort_combo.set_active(0)
+        self.wh_sort_combo.set_tooltip_text("Sort order")
+        self.wh_sort_combo.connect("changed", self.on_wh_sort_combo_changed)
+
+        # Top range combo (only effective when sort=toplist)
+        self.wh_top_range_combo = Gtk.ComboBoxText()
+        for display in WH_TOP_RANGE_DISPLAYS.values():
+            self.wh_top_range_combo.append_text(display)
+        self.wh_top_range_combo.set_active(0)
+        self.wh_top_range_combo.set_sensitive(False)
+        self.wh_top_range_combo.set_tooltip_text("Top list range")
+        self.wh_top_range_combo.connect("changed", self._debounce_search)
+
+        # Minimum resolution combo
+        self.wh_min_res_combo = Gtk.ComboBoxText()
+        for display in WH_MIN_RESOLUTIONS.values():
+            self.wh_min_res_combo.append_text(display)
+        self.wh_min_res_combo.set_active(0)
+        self.wh_min_res_combo.set_tooltip_text("Minimum resolution")
+        self.wh_min_res_combo.connect("changed", self._debounce_search)
+
+        # AI art filter toggle
+        self.wh_ai_toggle = Gtk.CheckButton(label="Hide AI Art")
+        self.wh_ai_toggle.set_active(True)
+        self.wh_ai_toggle.set_tooltip_text("Filter out AI-generated wallpapers")
+        self.wh_ai_toggle.connect("toggled", self._debounce_search)
 
         # Create refresh button:
         self.refresh_button = Gtk.Button(label=self.txt.msg_refresh)
@@ -167,13 +213,6 @@ class App(Gtk.Window):
         self.files_box.pack_start(self.clear_button, expand=False, fill=False, padding=0)
         self.files_box.pack_start(self.sort_combo, expand=False, fill=False, padding=0)
 
-        # Group 2: Wallhaven (category + refresh)
-        self.wh_box = Gtk.Box(spacing=4)
-        self.wh_box.get_style_context().add_class("action-group")
-        self.wh_box.pack_start(self.wh_label, expand=False, fill=False, padding=0)
-        self.wh_box.pack_start(self.wh_combo, expand=False, fill=False, padding=0)
-        self.wh_box.pack_start(self.refresh_button, expand=False, fill=False, padding=0)
-
         # Group 3: Actions (random, options, exit)
         self.actions_box = Gtk.Box(spacing=4)
         self.actions_box.get_style_context().add_class("action-group")
@@ -181,19 +220,52 @@ class App(Gtk.Window):
         self.actions_box.pack_start(self.options_button, expand=False, fill=False, padding=0)
         self.actions_box.pack_start(self.exit_button, expand=False, fill=False, padding=0)
 
-        # Separators between groups
+        # Separator between groups
         sep1 = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
-        sep2 = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
 
         # Add all groups to the top container:
         self.top_container = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self.top_container.get_style_context().add_class("top-bar")
         self.top_container.pack_start(self.files_box, False, False, 0)
         self.top_container.pack_start(sep1, False, False, 8)
-        self.top_container.pack_start(self.wh_box, False, False, 0)
-        self.top_container.pack_start(sep2, False, False, 8)
         self.top_container.pack_start(self.actions_box, False, False, 0)
         self.top_row_alignment.add(self.top_container)
+
+        # Wallhaven toolbar: category chips, purity chips, sort, top range, min res, AI toggle, refresh
+        self.wh_toolbar = Gtk.Box(spacing=4)
+        self.wh_toolbar.set_halign(Gtk.Align.CENTER)
+
+        cats_box = Gtk.Box(spacing=2)
+        cats_box.get_style_context().add_class("action-group")
+        cats_box.pack_start(self.wh_label, False, False, 2)
+        cats_box.pack_start(self.wh_cat_general, False, False, 0)
+        cats_box.pack_start(self.wh_cat_anime, False, False, 0)
+        cats_box.pack_start(self.wh_cat_people, False, False, 0)
+        self.wh_toolbar.pack_start(cats_box, False, False, 0)
+
+        sep_a = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+        self.wh_toolbar.pack_start(sep_a, False, False, 8)
+
+        purs_box = Gtk.Box(spacing=2)
+        purs_box.get_style_context().add_class("action-group")
+        purs_box.pack_start(self.wh_pur_sfw, False, False, 0)
+        purs_box.pack_start(self.wh_pur_sketchy, False, False, 0)
+        purs_box.pack_start(self.wh_pur_nsfw, False, False, 0)
+        self.wh_toolbar.pack_start(purs_box, False, False, 0)
+
+        sep_b = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+        self.wh_toolbar.pack_start(sep_b, False, False, 8)
+
+        controls_box = Gtk.Box(spacing=4)
+        controls_box.get_style_context().add_class("action-group")
+        controls_box.pack_start(self.wh_sort_combo, False, False, 0)
+        controls_box.pack_start(self.wh_top_range_combo, False, False, 0)
+        controls_box.pack_start(self.wh_min_res_combo, False, False, 0)
+        controls_box.pack_start(self.wh_ai_toggle, False, False, 0)
+        controls_box.pack_start(self.refresh_button, False, False, 0)
+        self.wh_toolbar.pack_start(controls_box, False, False, 0)
+
+        self.main_box.pack_start(self.wh_toolbar, False, False, 0)
 
         # STATUS FILTER BAR
         self.filter_box = Gtk.Box(spacing=4)
@@ -738,13 +810,66 @@ class App(Gtk.Window):
         dialog.destroy()
 
 
+    def _build_wh_categories(self) -> str:
+        """Build categories bitmask from toggle button states (general, anime, people)."""
+        return f"{'1' if self.wh_cat_general.get_active() else '0'}{'1' if self.wh_cat_anime.get_active() else '0'}{'1' if self.wh_cat_people.get_active() else '0'}"
+
+
+    def _build_wh_purity(self) -> str:
+        """Build purity bitmask from toggle button states (sfw, sketchy, nsfw)."""
+        return f"{'1' if self.wh_pur_sfw.get_active() else '0'}{'1' if self.wh_pur_sketchy.get_active() else '0'}{'1' if self.wh_pur_nsfw.get_active() else '0'}"
+
+
+    def _debounce_search(self, *args):
+        """Debounce and trigger a new Wallhaven search after filter change."""
+        if self._search_timer:
+            GLib.source_remove(self._search_timer)
+        self._search_timer = GLib.timeout_add(500, self._on_search_timeout)
+
+
+    def on_wh_cat_toggled(self, button):
+        """Prevent all category toggles from being disabled, then trigger search."""
+        if not any([self.wh_cat_general.get_active(), self.wh_cat_anime.get_active(), self.wh_cat_people.get_active()]):
+            button.set_active(True)
+            return
+        self._debounce_search()
+
+
+    def on_wh_purity_toggled(self, button):
+        """Prevent all purity toggles from being disabled, then trigger search."""
+        if not any([self.wh_pur_sfw.get_active(), self.wh_pur_sketchy.get_active(), self.wh_pur_nsfw.get_active()]):
+            button.set_active(True)
+            return
+        self._debounce_search()
+
+
+    def on_wh_sort_combo_changed(self, combo):
+        """Enable top range combo only when 'Top List' sort is selected."""
+        sort_idx = combo.get_active()
+        self.wh_top_range_combo.set_sensitive(0 <= sort_idx < len(WH_SORT_OPTIONS) and WH_SORT_OPTIONS[sort_idx] == "toplist")
+        self._debounce_search()
+
+
     def fetch_wallhaven_gallery(self) -> None:
         """Fetch wallpapers from Wallhaven API and display thumbnails in grid"""
         try:
-            preset_idx = self.wh_combo.get_active()
-            preset = self.wh_presets[preset_idx] if 0 <= preset_idx < len(self.wh_presets) else "random"
+            categories = self._build_wh_categories()
+            purity = self._build_wh_purity()
+            sort_idx = self.wh_sort_combo.get_active()
+            sorting = WH_SORT_OPTIONS[sort_idx] if 0 <= sort_idx < len(WH_SORT_OPTIONS) else "date_added"
+            tr_keys = list(WH_TOP_RANGE_DISPLAYS.keys())
+            tr_idx = self.wh_top_range_combo.get_active()
+            top_range = tr_keys[tr_idx] if 0 <= tr_idx < len(tr_keys) else ""
+            mr_keys = list(WH_MIN_RESOLUTIONS.keys())
+            mr_idx = self.wh_min_res_combo.get_active()
+            atleast = mr_keys[mr_idx] if 0 <= mr_idx < len(mr_keys) else ""
+            ai_art_filter = 1 if self.wh_ai_toggle.get_active() else 0
             query = self.search_entry.get_text().strip()
-            items, meta = wallhaven.search(preset, query, self.current_page)
+            items, meta = wallhaven.search(
+                categories=categories, purity=purity, sorting=sorting,
+                query=query, page=self.current_page, top_range=top_range,
+                atleast=atleast, ai_art_filter=ai_art_filter,
+            )
         except Exception as e:
             GLib.idle_add(self.show_message, f"Wallhaven error: {e}")
             return
@@ -1006,11 +1131,17 @@ class App(Gtk.Window):
                 widget.hide()
             for widget in self.options_box:
                 widget.hide()
+            if hasattr(self, 'wh_toolbar'):
+                for widget in self.wh_toolbar:
+                    widget.hide()
         else:
             for widget in self.top_container:
                 widget.show()
             for widget in self.options_box:
                 widget.show()
+            if hasattr(self, 'wh_toolbar'):
+                for widget in self.wh_toolbar:
+                    widget.show()
 
 
     # def on_window_resize(self, widget, allocation) -> None:
@@ -1524,7 +1655,13 @@ class App(Gtk.Window):
     def _fetch_random_and_set(self) -> None:
         """Thread: get random from API, download, set"""
         try:
-            items, _ = wallhaven.search("random", page=1)
+            categories = self._build_wh_categories()
+            purity = self._build_wh_purity()
+            ai_art_filter = 1 if self.wh_ai_toggle.get_active() else 0
+            items, _ = wallhaven.search(
+                categories=categories, purity=purity, sorting="random",
+                ai_art_filter=ai_art_filter, page=1,
+            )
             if not items:
                 return
             item = items[0]

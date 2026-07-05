@@ -39,6 +39,16 @@ TIMERS: Dict[str, int] = {"30 sec": 30, "1 min": 60, "2 min": 120, "5 min": 300,
 
 LINUX_WALLPAPERENGINE_CLAMP: List[str] = ["none", "clamp", "fit", "fill"]
 
+WH_SORT_OPTIONS: List[str] = ["date_added", "relevance", "random", "views", "favorites", "toplist"]
+WH_SORT_DISPLAYS: Dict[str, str] = {"date_added": "Latest", "relevance": "Relevance", "random": "Random",
+                    "views": "Most Viewed", "favorites": "Most Favorited", "toplist": "Top List"}
+WH_TOP_RANGES: List[str] = ["1d", "3d", "1w", "1m", "3m", "6m", "1y"]
+WH_TOP_RANGE_DISPLAYS: Dict[str, str] = {"1d": "Past Day", "3d": "Past 3 Days", "1w": "Past Week",
+                         "1m": "Past Month", "3m": "Past 3 Months", "6m": "Past 6 Months", "1y": "Past Year"}
+WH_MIN_RESOLUTIONS: Dict[str, str] = {"": "None", "1280x720": "HD 720p", "1920x1080": "FHD 1080p",
+                      "2560x1440": "2K 1440p", "3840x2160": "4K 2160p",
+                      "5120x2880": "5K 2880p", "7680x4320": "8K 4320p"}
+
 
 def get_monitor_names_with_swww() -> List[str]:
     """Obtain the list of plugged monitors using swww daemon"""

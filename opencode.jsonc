@@ -9,11 +9,6 @@
       "description": "Show wallpaper-brain stats (kept, discarded, top tags)",
       "command": "wallpaper-brain status"
     },
-    "wp-vault": {
-      "template": "Open the waypaper Obsidian vault at ~/waypaper-brain/",
-      "description": "Open the waypaper Obsidian vault",
-      "command": "flatpak run md.obsidian.Obsidian open?vault=$HOME/waypaper-brain"
-    },
     "wp-push": {
       "template": "Stage all changes, commit with a descriptive message, and push to origin main in ~/projects/waypaper-my-version",
       "description": "Commit all changes and push to remote",

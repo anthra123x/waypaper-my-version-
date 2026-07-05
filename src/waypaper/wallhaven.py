@@ -50,19 +50,42 @@ def _request(url: str) -> dict:
         return json.loads(resp.read().decode())
 
 
-def search(preset: str, query: str = "", page: int = 1) -> tuple[list[WallpaperItem], PageMeta]:
-    """Search Wallhaven by preset category with optional query text."""
-    p = CAT_PRESETS.get(preset, CAT_PRESETS["random"])
-    params = {
-        "categories": p["cats"],
-        "purity": p["purity"],
-        "sorting": p["sorting"],
-        "page": str(page),
-    }
-    if query:
-        params["q"] = query
-    elif p.get("q"):
-        params["q"] = p["q"]
+def search(preset: str = "random", query: str = "", page: int = 1,
+           categories: str = None, purity: str = None, sorting: str = None,
+           top_range: str = "", atleast: str = "",
+           ai_art_filter: int = None, ratios: str = "", colors: str = "") -> tuple[list[WallpaperItem], PageMeta]:
+    """Search Wallhaven with full parameter support.
+
+    If categories/purity/sorting are provided as kwargs they override the preset.
+    """
+    params = {"page": str(page)}
+
+    if categories is not None:
+        params["categories"] = categories
+        params["purity"] = purity if purity is not None else "100"
+        params["sorting"] = sorting if sorting is not None else "date_added"
+        if query:
+            params["q"] = query
+    else:
+        p = CAT_PRESETS.get(preset, CAT_PRESETS["random"])
+        params["categories"] = p["cats"]
+        params["purity"] = p["purity"]
+        params["sorting"] = p["sorting"]
+        if query:
+            params["q"] = query
+        elif p.get("q"):
+            params["q"] = p["q"]
+
+    if top_range:
+        params["topRange"] = top_range
+    if atleast:
+        params["atleast"] = atleast
+    if ai_art_filter is not None:
+        params["ai_art_filter"] = str(ai_art_filter)
+    if ratios:
+        params["ratios"] = ratios
+    if colors:
+        params["colors"] = colors
 
     url = f"{API}/search?{urllib.parse.urlencode(params)}"
     data = _request(url)
