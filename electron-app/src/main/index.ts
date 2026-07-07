@@ -1,12 +1,27 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, dialog } from 'electron'
 import { join } from 'path'
+import { writeFile } from 'fs/promises'
 import { initPaths } from './brain'
 import { registerIpcHandlers } from './ipc'
 import { PREFS_PATH, LIBRARY_DIR } from './paths'
 
+process.on('uncaughtException', (err) => {
+  try {
+    writeFile(join(app.getPath('userData'), 'crash.log'), `[${new Date().toISOString()}] ${err.stack || err.message}\n`, { flag: 'a' })
+  } catch {}
+})
+
+process.on('unhandledRejection', (reason) => {
+  try {
+    writeFile(join(app.getPath('userData'), 'crash.log'), `[${new Date().toISOString()}] Unhandled: ${reason}\n`, { flag: 'a' })
+  } catch {}
+})
+
 app.disableHardwareAcceleration()
-app.commandLine.appendSwitch('in-process-gpu')
-app.commandLine.appendSwitch('ozone-platform-hint', 'auto')
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('in-process-gpu')
+  app.commandLine.appendSwitch('ozone-platform-hint', 'auto')
+}
 
 let mainWindow: BrowserWindow | null = null
 

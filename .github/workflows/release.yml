@@ -1,32 +1,59 @@
-name: Build and Release
+name: Build & Release
 
 on:
   push:
     tags:
-      - "v*.*.*"
-
-permissions:
-  contents: write
+      - "v*"
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  build:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+
+    defaults:
+      run:
+        working-directory: electron-app
+
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-node@v4
         with:
-          python-version: "3.12"
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: electron-app/package-lock.json
 
-      - run: pip install pyinstaller flask pillow
+      - run: npm ci
 
-      - run: pyinstaller --clean waypaper-windows.spec
+      - run: npm run build
 
-      - name: Upload .exe to release
-        uses: svenstaro/upload-release-action@v2
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: npx electron-builder --win --publish=never
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: npx electron-builder --linux --publish=never
+
+      - uses: actions/upload-artifact@v4
         with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: dist/waypaper.exe
-          asset_name: waypaper-${{ github.ref_name }}.exe
-          tag: ${{ github.ref }}
-          overwrite: true
+          name: waypaper-${{ matrix.os }}
+          path: electron-app/dist/
+
+  upload:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+
+      - name: Upload to existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for f in waypaper-windows-latest/*.exe waypaper-ubuntu-latest/*.AppImage; do
+            [ -f "$f" ] && gh release upload "${{ github.ref_name }}" "$f" --clobber || true
+          done
