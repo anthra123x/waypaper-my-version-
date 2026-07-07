@@ -159,7 +159,11 @@ export default function App() {
   const handleSet = async () => {
     if (!previewItem) return
     try {
-      await api.setWallpaper(previewItem.id, previewItem.full_url)
+      if (previewItem.path) {
+        await api.setWallpaperFromPath(previewItem.path)
+      } else {
+        await api.setWallpaper(previewItem.id, previewItem.full_url)
+      }
       fetchStats()
       setPreviewItem(null)
       setPreviewLocalPath(null)

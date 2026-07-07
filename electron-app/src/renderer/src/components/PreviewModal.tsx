@@ -139,6 +139,7 @@ export default function PreviewModal({
             )}
             {mode === 'library' && (
               <>
+                <button className="btn-primary" onClick={onSet}>Set Wallpaper</button>
                 <button className="btn-danger" onClick={onDiscard}>Discard</button>
                 <button className="btn-danger" onClick={onDelete}>Delete</button>
               </>
